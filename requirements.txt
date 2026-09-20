@@ -1,0 +1,9 @@
+faster-whisper
+PyAudioWPatch
+numpy
+python-dotenv
+tqdm
+nvidia-cublas-cu12
+nvidia-cudnn-cu12
+nvidia-cuda-runtime-cu12
+lameenc
