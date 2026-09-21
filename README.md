@@ -46,7 +46,7 @@ Recordings are saved as 64kbps mono MP3 (not raw WAV) — roughly 480KB per minu
 ### For non-technical users (easiest way)
 No coding or setup needed — just these steps:
 
-1. Get the `AudioTranscriber-CPU.exe` file (ask the developer for it, ~90MB).
+1. [**Download AudioTranscriber-CPU.exe**](https://github.com/nugrahazikry/simple-audio-transciber/releases/latest/download/AudioTranscriber-CPU.exe) (~90MB).
 2. Double-click it. A small window titled "Audio Transcriber" pops up — nothing to install.
 3. Click **Start Recording**, then let your meeting or video play.
 4. Click **Stop** when finished — it transcribes automatically, no further clicks needed.
