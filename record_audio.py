@@ -28,6 +28,8 @@ def record_system_audio(output_path, stop_event=None):
         stop_event = threading.Event()
 
     with pyaudio.PyAudio() as audio:
+
+        # 1. Open PyAudio and find the default WASAPI loopback device
         wasapi_info = audio.get_host_api_info_by_type(pyaudio.paWASAPI)
         default_speakers = audio.get_device_info_by_index(wasapi_info["defaultOutputDevice"])
 
@@ -43,6 +45,7 @@ def record_system_audio(output_path, stop_event=None):
         sample_rate = int(default_speakers["defaultSampleRate"])
         sample_format = pyaudio.paInt16
 
+        # 2. Open an input stream on that loopback device
         stream = audio.open(
             format=sample_format,
             channels=channels,
@@ -55,6 +58,7 @@ def record_system_audio(output_path, stop_event=None):
         print(f"Recording system audio from: {default_speakers['name']}")
         print("Press Ctrl+C to stop recording...")
 
+        # 3. Read audio chunks in a loop until stop_event is set (or Ctrl+C in CLI use)
         frames = []
         try:
             while not stop_event.is_set():
@@ -66,6 +70,7 @@ def record_system_audio(output_path, stop_event=None):
             stream.stop_stream()
             stream.close()
 
+        # 4. Write all collected chunks to a WAV file at output_path
         with wave.open(output_path, "wb") as wf:
             wf.setnchannels(channels)
             wf.setsampwidth(audio.get_sample_size(sample_format))
@@ -91,16 +96,20 @@ def convert_wav_to_mp3(wav_path, mp3_path):
     The result of this function are as follows:
     mp3_path: the path of the saved MP3 file, same as the input argument
     """
+
+    # 1. Read the WAV file's PCM audio data and its channel/sample rate info
     with wave.open(wav_path, "rb") as wf:
         channels = wf.getnchannels()
         sample_rate = wf.getframerate()
         pcm_data = wf.readframes(wf.getnframes())
 
+    # 2. Downmix stereo to mono by averaging channels
     if channels > 1:
         samples = np.frombuffer(pcm_data, dtype=np.int16).reshape(-1, channels)
         pcm_data = samples.mean(axis=1).astype(np.int16).tobytes()
         channels = 1
 
+    # 3. Encode the mono PCM data to MP3 at 64kbps using lameenc
     encoder = lameenc.Encoder()
     encoder.set_bit_rate(64)
     encoder.set_in_sample_rate(sample_rate)
@@ -110,6 +119,7 @@ def convert_wav_to_mp3(wav_path, mp3_path):
     mp3_data = encoder.encode(pcm_data)
     mp3_data += encoder.flush()
 
+    # 4. Write the encoded MP3 bytes to mp3_path
     with open(mp3_path, "wb") as f:
         f.write(mp3_data)
 

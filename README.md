@@ -1,9 +1,9 @@
 # Audio Transcriber
-A local Windows desktop tool that records system/speaker audio (Google Meet, Teams, Slack huddles, YouTube — anything playing through your speakers) and transcribes it with Whisper, GPU-accelerated. Runs as a one-click GUI or a CLI, with no data leaving your machine.
+A local Windows desktop tool that records system/speaker audio (Google Meet, Teams, Slack huddles, YouTube — anything playing through your speakers) and transcribes it with Whisper. Uses GPU automatically when available, falls back to CPU otherwise. Runs as a one-click GUI or a CLI, with no data leaving your machine.
 
 ![Python Version](https://img.shields.io/badge/python-3.11-blue)
 ![Platform](https://img.shields.io/badge/platform-windows-lightgrey)
-![GPU](https://img.shields.io/badge/GPU-CUDA-76B900)
+![GPU](https://img.shields.io/badge/GPU-optional-76B900)
 
 # Table of content
 
@@ -28,8 +28,8 @@ The application consists of five main features.
 ### 1. System Audio Recording
 Records whatever plays through your speakers via WASAPI loopback — Meet, Teams, Slack huddles, YouTube, any app. Does **not** record your microphone.
 
-### 2. GPU-Accelerated Transcription
-Transcribes with `faster-whisper` (`large-v3-turbo`) on your NVIDIA GPU, with a live 0–100% progress bar.
+### 2. GPU-Accelerated Transcription, with CPU Fallback
+Transcribes with `faster-whisper` (`large-v3-turbo`). Uses your NVIDIA GPU automatically when one is detected, otherwise runs on CPU — no setup needed either way. If a GPU is available, the GUI shows a GPU/CPU toggle so you can pick manually. A live 0–100% progress bar tracks transcription either way.
 
 ### 3. One-Click Desktop GUI
 A small popup window (`gui.py`) — Start/Stop button, live elapsed timer, progress bar, and the saved file location. No terminal required once set up.
@@ -43,8 +43,19 @@ Recordings are saved as 64kbps mono MP3 (not raw WAV) — roughly 480KB per minu
 
 ## How to use the Apps
 
+### For non-technical users (easiest way)
+No coding or setup needed — just these steps:
+
+1. Get the `AudioTranscriber-CPU.exe` file (ask the developer for it, ~90MB).
+2. Double-click it. A small window titled "Audio Transcriber" pops up — nothing to install.
+3. Click **Start Recording**, then let your meeting or video play.
+4. Click **Stop** when finished — it transcribes automatically, no further clicks needed.
+5. Once it shows **Done**, the "Last saved" text tells you where your transcript was saved.
+
+The steps below are for running the app from source code instead (for developers).
+
 ### Step 1 — Complete the setup
-Follow [Getting Started](#getting-started) below to install dependencies and configure your Hugging Face token.
+Follow [Getting Started](#getting-started) below to install dependencies.
 
 ### Step 2 — Launch the app
 Run `python gui.py` (or double-click your [desktop shortcut](#create-a-desktop-shortcut) once set up).
@@ -67,7 +78,7 @@ audio transciption/
 ├── main.py              # CLI entry point (Ctrl+C to stop)
 ├── gui.py                # GUI entry point (tkinter)
 ├── record_audio.py       # WASAPI loopback recording + WAV-to-MP3 conversion
-├── transcribe.py         # faster-whisper GPU transcription
+├── transcribe.py         # faster-whisper transcription (GPU if available, else CPU)
 ├── requirements.txt      # Python dependencies
 ├── .env                  # HF_TOKEN — not committed
 ├── .gitignore
@@ -91,31 +102,26 @@ audio transciption/
 | PyAudioWPatch | latest | WASAPI loopback audio recording |
 | lameenc | latest | Pure-Python MP3 encoding (no ffmpeg needed) |
 | numpy | latest | Audio sample handling (stereo-to-mono downmix) |
-| python-dotenv | latest | Loads `HF_TOKEN` from `.env` |
+| python-dotenv | latest | Loads an optional `HF_TOKEN` from `.env`, if present |
 | tqdm | latest | CLI progress bars |
-| nvidia-cublas-cu12, nvidia-cudnn-cu12, nvidia-cuda-runtime-cu12 | latest | CUDA runtime libraries for GPU inference |
-| NVIDIA GPU | CUDA-capable | Required for GPU transcription (tested on RTX 3050 Laptop, 4GB VRAM) |
+| nvidia-cublas-cu12, nvidia-cudnn-cu12, nvidia-cuda-runtime-cu12 | latest | CUDA runtime libraries — only used if a GPU is detected |
+| NVIDIA GPU | CUDA-capable (optional) | Used automatically if present for faster transcription (tested on RTX 3050 Laptop, 4GB VRAM); the app runs fine on CPU otherwise |
 
 ### Tech stack
 
 | Layer | Tech stack |
 |---|---|
 | Audio capture | PyAudioWPatch (WASAPI loopback) |
-| Speech-to-text | faster-whisper (`large-v3-turbo`), CUDA/float16 |
+| Speech-to-text | faster-whisper (`large-v3-turbo`), GPU (float16) or CPU (int8), auto-detected |
 | Audio encoding | lameenc (MP3, 64kbps mono) |
 | GUI | tkinter (stdlib) |
 | Model hosting | Hugging Face Hub (auto-downloaded, cached locally) |
 
-### Credentials setup
+### Model download
 
-This project needs a Hugging Face token for faster, higher-rate-limit model downloads.
+The `large-v3-turbo` model downloads automatically the first time you transcribe anything, and is cached afterward — no manual step needed for most people.
 
-1. Create a `.env` file in the project root:
-```env
-HF_TOKEN=your_huggingface_token_here
-```
-
-2. Get a free token from [huggingface.co](https://huggingface.co/) → Settings → Access Tokens → New token (Read role).
+If downloads are slow or rate-limited, you can optionally speed them up with a free Hugging Face token: create a `.env` file in the project root with `HF_TOKEN=your_token_here` (get one at [huggingface.co](https://huggingface.co/) → Settings → Access Tokens). This is purely a download-speed optimization, not a requirement to run the app.
 
 > ⚠️ **Never commit your `.env` file.** It's already listed in `.gitignore`.
 
@@ -127,14 +133,14 @@ HF_TOKEN=your_huggingface_token_here
 | Category | File | Description |
 |---|---|---|
 | Recording | `record_audio.py` | Opens the default WASAPI loopback device, records until stopped (via `stop_event` or Ctrl+C), and converts the result to a small mono MP3 |
-| Transcription | `transcribe.py` | Loads `faster-whisper` on GPU, adds required CUDA DLL paths to `PATH`, transcribes with tuned settings (`vad_filter=True`, `condition_on_previous_text=False` — measured best after testing 7+ configurations) |
+| Transcription | `transcribe.py` | Auto-detects a usable GPU (`is_gpu_available()`) and loads `faster-whisper` on GPU or CPU accordingly, with a live fallback to CPU if GPU loading fails; transcribes with tuned settings (`vad_filter=True`, `condition_on_previous_text=False` — measured best after testing 7+ configurations) |
 | CLI entry point | `main.py` | Runs record → transcribe → convert-to-MP3 in sequence, controlled via Ctrl+C |
 | GUI entry point | `gui.py` | tkinter popup; runs recording/transcription on background threads, coordinated via `queue.Queue` + `root.after()` polling |
 
 
 ## Run the project locally
 
-**Prerequisites:** Python 3.11, an NVIDIA GPU with CUDA support, and a Hugging Face token (see [Credentials setup](#credentials-setup)).
+**Prerequisites:** Python 3.11. An NVIDIA GPU is optional — used automatically if present, CPU otherwise.
 
 **1. Create and activate a virtual environment:**
 ```powershell
