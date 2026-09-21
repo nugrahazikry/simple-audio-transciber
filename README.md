@@ -10,6 +10,7 @@ A local Windows desktop tool that records system/speaker audio (Google Meet, Tea
 - [For Users](#for-users)
   - [Apps Features](#apps-features)
   - [How to Use the Apps](#how-to-use-the-apps)
+  - [A Note on Antivirus Warnings](#a-note-on-antivirus-warnings)
 - [For Developers](#for-developers)
   - [Project Structure](#project-structure)
   - [Getting Started](#getting-started)
@@ -46,11 +47,14 @@ Recordings are saved as 64kbps mono MP3 (not raw WAV) — roughly 480KB per minu
 ### For non-technical users (easiest way)
 No coding or setup needed — just these steps:
 
-1. [**Download AudioTranscriber-CPU.exe**](https://github.com/nugrahazikry/simple-audio-transciber/releases/latest/download/AudioTranscriber-CPU.exe) (~90MB).
-2. Double-click it. A small window titled "Audio Transcriber" pops up — nothing to install.
-3. Click **Start Recording**, then let your meeting or video play.
-4. Click **Stop** when finished — it transcribes automatically, no further clicks needed.
-5. Once it shows **Done**, the "Last saved" text tells you where your transcript was saved.
+1. [**Download AudioTranscriber-CPU.zip**](https://github.com/nugrahazikry/simple-audio-transciber/releases/latest/download/AudioTranscriber-CPU.zip) (~90MB).
+2. Right-click the downloaded zip → **Extract All**, then open the extracted folder.
+3. Double-click `AudioTranscriber-CPU.exe` inside it. A small window titled "Audio Transcriber" pops up — nothing to install.
+4. Click **Start Recording**, then let your meeting or video play.
+5. Click **Stop** when finished — it transcribes automatically, no further clicks needed.
+6. Once it shows **Done**, the "Last saved" text tells you where your transcript was saved.
+
+> If Windows SmartScreen or your antivirus flags the exe, this is a known false positive with unsigned PyInstaller-built apps, not an actual virus — click **More info → Run anyway**, or see [this note](#a-note-on-antivirus-warnings) below.
 
 The steps below are for running the app from source code instead (for developers).
 
@@ -68,6 +72,19 @@ Click **Stop**. Transcription starts automatically; the progress bar fills as it
 
 ### Step 5 — Get your transcript
 Once status shows **Done**, the "Last saved" path points to `output/<date>/<timestamp>/`, containing the `.mp3` and `.txt` transcript.
+
+
+## A Note on Antivirus Warnings
+
+Windows SmartScreen or your antivirus may flag `AudioTranscriber-CPU.exe` as a virus or "potentially unwanted software." **This is a known false positive**, not an actual detection of malicious code.
+
+**Why it happens:** the exe is built with PyInstaller, which bundles Python and all dependencies into a single file that unpacks and runs itself from a temp folder at launch. That "unpack and execute from temp" pattern is also how real malware droppers behave, so antivirus heuristics flag it generically. The exe isn't code-signed (that costs money and isn't worth it for a small hobby tool), so it has no trust reputation built up either, which makes heuristic engines more cautious by default.
+
+**To run it anyway:**
+- If SmartScreen blocks it: click **More info** → **Run anyway**.
+- If Windows Defender quarantines it: open **Windows Security** → **Virus & threat protection** → **Protection history**, find the entry, and click **Actions → Allow** (or **Restore**).
+
+If you'd rather verify the source first, every line of this project is open in this repository — nothing is hidden or obfuscated.
 
 
 # For Developers
