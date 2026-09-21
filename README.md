@@ -8,8 +8,8 @@ A local Windows desktop tool that records system/speaker audio (Google Meet, Tea
 # Table of content
 
 - [For Users](#for-users)
-  - [Apps Features](#apps-features)
   - [How to Use the Apps](#how-to-use-the-apps)
+  - [Apps Features](#apps-features)
   - [A Note on Antivirus Warnings](#a-note-on-antivirus-warnings)
 - [For Developers](#for-developers)
   - [Project Structure](#project-structure)
@@ -21,6 +21,22 @@ A local Windows desktop tool that records system/speaker audio (Google Meet, Tea
 
 
 # For Users
+
+## How to use the Apps
+
+### For non-technical users (easiest way)
+No coding or setup needed — just these steps:
+
+1. [**Download and extract AudioTranscriber-CPU.zip**](https://github.com/nugrahazikry/simple-audio-transciber/releases/latest/download/AudioTranscriber-CPU.zip) (~90MB) — right-click the downloaded zip → **Extract All**.
+2. Open the extracted folder and double-click `AudioTranscriber-CPU.exe` inside it. A small window titled "Audio Transcriber" pops up — nothing to install.
+3. Click **Start Recording**, then let your meeting or video play.
+4. Click **Stop** when finished — it transcribes automatically, no further clicks needed.
+5. Once it shows **Done**, the "Last saved" text tells you where your transcript was saved.
+
+> If Windows SmartScreen or your antivirus flags the exe, this is a known false positive with unsigned PyInstaller-built apps, not an actual virus — click **More info → Run anyway**, or see [this note](#a-note-on-antivirus-warnings) below.
+
+Prefer to run it from source code instead (for developers)? See [Run the project locally](#run-the-project-locally) under [For Developers](#for-developers).
+
 
 ## Apps Features
 
@@ -40,38 +56,6 @@ Every line is tagged with a `[mm:ss]` timestamp matching the recording.
 
 ### 5. Small Storage Footprint
 Recordings are saved as 64kbps mono MP3 (not raw WAV) — roughly 480KB per minute — auto-deleted-and-replaced right after a successful transcript.
-
-
-## How to use the Apps
-
-### For non-technical users (easiest way)
-No coding or setup needed — just these steps:
-
-1. [**Download AudioTranscriber-CPU.zip**](https://github.com/nugrahazikry/simple-audio-transciber/releases/latest/download/AudioTranscriber-CPU.zip) (~90MB).
-2. Right-click the downloaded zip → **Extract All**, then open the extracted folder.
-3. Double-click `AudioTranscriber-CPU.exe` inside it. A small window titled "Audio Transcriber" pops up — nothing to install.
-4. Click **Start Recording**, then let your meeting or video play.
-5. Click **Stop** when finished — it transcribes automatically, no further clicks needed.
-6. Once it shows **Done**, the "Last saved" text tells you where your transcript was saved.
-
-> If Windows SmartScreen or your antivirus flags the exe, this is a known false positive with unsigned PyInstaller-built apps, not an actual virus — click **More info → Run anyway**, or see [this note](#a-note-on-antivirus-warnings) below.
-
-The steps below are for running the app from source code instead (for developers).
-
-### Step 1 — Complete the setup
-Follow [Getting Started](#getting-started) below to install dependencies.
-
-### Step 2 — Launch the app
-Run `python gui.py` (or double-click your [desktop shortcut](#create-a-desktop-shortcut) once set up).
-
-### Step 3 — Record
-Click **Start Recording**. Let the meeting/video play — the elapsed timer counts up live.
-
-### Step 4 — Stop and transcribe
-Click **Stop**. Transcription starts automatically; the progress bar fills as it runs.
-
-### Step 5 — Get your transcript
-Once status shows **Done**, the "Last saved" path points to `output/<date>/<timestamp>/`, containing the `.mp3` and `.txt` transcript.
 
 
 ## A Note on Antivirus Warnings
@@ -186,6 +170,11 @@ Or the CLI:
 ```powershell
 python main.py
 ```
+
+**5. Record and transcribe:**
+- Click **Start Recording**, then let the meeting/video play — the elapsed timer counts up live.
+- Click **Stop** when finished — transcription starts automatically, progress bar fills as it runs.
+- Once status shows **Done**, the "Last saved" path points to `output/<date>/<timestamp>/`, containing the `.mp3` and `.txt` transcript.
 
 
 ## Create a Desktop Shortcut
