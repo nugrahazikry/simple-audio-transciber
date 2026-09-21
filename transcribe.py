@@ -111,7 +111,7 @@ def _run_pass(model, audio_path, vad_filter, progress_callback):
     return transcript_parts
 
 
-def transcribe_audio(audio_path, output_path, progress_callback=None, device="auto"):
+def transcribe_audio(audio_path, output_path, progress_callback=None, device="auto", status_callback=None):
     """
     This function is about loading Whisper Large v3 Turbo and transcribing a WAV file to text.
     The variable used in this code are:
@@ -120,6 +120,10 @@ def transcribe_audio(audio_path, output_path, progress_callback=None, device="au
     progress_callback: optional function called with a 0-100 float as transcription progresses;
     if not given, a tqdm progress bar is printed to the console instead
     device: "auto" (use GPU if available, else CPU), "cuda", or "cpu"
+    status_callback: optional function called with a short text message when the current phase
+    changes (e.g. model loading vs. transcribing) — lets a GUI show what's happening during the
+    model-loading step, which can take minutes on first run (~1.6GB download) with no progress
+    percentage available; falls back to printing to the console if not given
 
     The flow process of this codes are as follows:
     1. Resolve "auto" to an actual device, then load the model (GPU uses float16, CPU uses
@@ -135,22 +139,27 @@ def transcribe_audio(audio_path, output_path, progress_callback=None, device="au
     output_path: the path of the saved transcript file
     used_fallback: True if the vad_filter=False retry was needed to get any text
     """
+    def report_status(message):
+        if status_callback:
+            status_callback(message)
+        else:
+            print(message)
 
     # 1. Resolve "auto" to an actual device, then load the model with a CPU fallback
     if device == "auto":
         device = "cuda" if is_gpu_available() else "cpu"
 
-    print(f"Loading model on {device} (downloads on first run, then cached)...")
+    report_status(f"Loading model on {device} (first run downloads ~1.6GB, then cached)...")
     try:
         compute_type = "float16" if device == "cuda" else "int8"
         model = WhisperModel(MODEL_SIZE, device=device, compute_type=compute_type)
     except Exception as e:
         if device != "cuda":
             raise
-        print(f"GPU load failed ({e}). Falling back to CPU...")
+        report_status(f"GPU load failed ({e}). Falling back to CPU...")
         device = "cpu"
         model = WhisperModel(MODEL_SIZE, device="cpu", compute_type="int8")
-    print("Model loaded. Running transcription...")
+    report_status("Model loaded. Running transcription...")
 
     # 2. Run a first pass with vad_filter=True (measured best setting for normal speech)
     transcript_parts = _run_pass(model, audio_path, vad_filter=True, progress_callback=progress_callback)
@@ -158,7 +167,7 @@ def transcribe_audio(audio_path, output_path, progress_callback=None, device="au
 
     # 3. If no speech was found at all, retry once with vad_filter=False
     if not transcript_parts:
-        print("No speech detected with VAD on. Retrying with VAD off...")
+        report_status("No speech detected with VAD on. Retrying with VAD off...")
         transcript_parts = _run_pass(model, audio_path, vad_filter=False, progress_callback=progress_callback)
         used_fallback = True
 

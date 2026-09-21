@@ -73,7 +73,7 @@ class App:
         self.timer_label = ttk.Label(root, text="00:00", font=("Segoe UI", 20))
         self.timer_label.pack(pady=5)
 
-        self.status_label = ttk.Label(root, text="Idle")
+        self.status_label = ttk.Label(root, text="Idle", wraplength=280, justify="center")
         self.status_label.pack(pady=5)
 
         self.progress_bar = ttk.Progressbar(root, mode="determinate", maximum=100, length=250)
@@ -287,10 +287,13 @@ class App:
         def on_progress(pct):
             self.msg_queue.put(("progress", pct))
 
-        # 1. Transcribe the WAV file, reporting progress through the message queue
+        def on_status(message):
+            self.msg_queue.put(("status", message))
+
+        # 1. Transcribe the WAV file, reporting progress and phase through the message queue
         try:
             _, saved_txt_path, used_fallback = transcribe_audio(
-                self.wav_path, self.txt_path, progress_callback=on_progress, device=device
+                self.wav_path, self.txt_path, progress_callback=on_progress, device=device, status_callback=on_status
             )
         except Exception as e:
             self.msg_queue.put(("error", f"Transcription failed: {e}"))
@@ -346,6 +349,8 @@ class App:
                 # 2. Apply the corresponding widget updates for each message type
                 if event == "recording_done":
                     self.begin_transcription()
+                elif event == "status":
+                    self.status_label.config(text=payload)
                 elif event == "progress":
                     self.progress_bar["value"] = payload
                     self.progress_label.config(text=f"{round(payload)}%")
