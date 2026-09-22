@@ -5,7 +5,7 @@ import time
 import tkinter as tk
 import warnings
 from datetime import datetime
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
 warnings.filterwarnings("ignore")
 
@@ -17,6 +17,8 @@ from record_audio import record_system_audio, convert_wav_to_mp3
 from transcribe import transcribe_audio, is_gpu_available
 
 OUTPUT_DIR = "output"
+DEBOUNCE_SECONDS = 0.5
+SHORT_RECORDING_SECONDS = 5
 
 
 class App:
@@ -47,6 +49,8 @@ class App:
         self.stop_event = None
         self.msg_queue = queue.Queue()
         self.start_time = None
+        self.last_recording_seconds = None
+        self.last_toggle_click = 0
         self.session_dir = None
         self.wav_path = None
         self.txt_path = None
@@ -95,18 +99,25 @@ class App:
         (none)
 
         The flow process of this codes are as follows:
-        1. If idle or done, start a new recording session
-        2. If recording, stop it
+        1. Ignore rapid repeat clicks (accidental double-click on the same button)
+        2. If idle or done, start a new recording session
+        3. If recording, stop it
 
         The result of this function are as follows:
         (none)
         """
 
-        # 1. If idle or done, start a new recording session
+        # 1. Ignore rapid repeat clicks
+        now = time.time()
+        if now - self.last_toggle_click < DEBOUNCE_SECONDS:
+            return
+        self.last_toggle_click = now
+
+        # 2. If idle or done, start a new recording session
         if self.state in ("IDLE", "DONE"):
             self.start_recording()
 
-        # 2. If recording, stop it
+        # 3. If recording, stop it
         elif self.state == "RECORDING":
             self.stop_recording()
 
@@ -131,6 +142,29 @@ class App:
         if self.gpu_radio:
             self.gpu_radio.config(state="normal")
         self.cpu_radio.config(state="normal")
+
+    def _short_recording_note(self):
+        """
+        This function is about building a warning prefix when the actual recording turned out
+        unusually short, as a last-resort safety net beyond the stop-confirmation dialog (e.g. if
+        the recording was cut short by something other than the user clicking Stop).
+        The variable used in this code are:
+        (none)
+
+        The flow process of this codes are as follows:
+        1. If the last recording's duration is unknown or not unusually short, return no note
+        2. Otherwise build a short warning line to prefix onto the final status message
+
+        The result of this function are as follows:
+        note: a warning string ending in a space, or an empty string if nothing to flag
+        """
+
+        # 1. If duration is unknown or not unusually short, return no note
+        if self.last_recording_seconds is None or self.last_recording_seconds >= SHORT_RECORDING_SECONDS:
+            return ""
+
+        # 2. Otherwise build a short warning line
+        return f"Note: recording was only {self.last_recording_seconds:.0f}s long — was that intentional? "
 
     def start_recording(self):
         """
@@ -159,6 +193,7 @@ class App:
         # 2. Reset the UI
         self.stop_event = threading.Event()
         self.state = "RECORDING"
+        self.last_recording_seconds = None
         self.toggle_button.config(text="Stop")
         self.status_label.config(text="Recording...")
         self.saved_label.config(text="")
@@ -202,17 +237,27 @@ class App:
         (none)
 
         The flow process of this codes are as follows:
-        1. Set the stop_event so the recording loop exits
-        2. Disable the button and show a transitional status until transcription begins
+        1. If recording only just started, confirm before stopping (guards against an
+           accidental click stopping a session almost immediately)
+        2. Set the stop_event so the recording loop exits
+        3. Disable the button and show a transitional status until transcription begins
 
         The result of this function are as follows:
         (none)
         """
 
-        # 1. Set the stop_event so the recording loop exits
+        # 1. If recording only just started, confirm before stopping
+        elapsed = time.time() - self.start_time
+        if elapsed < SHORT_RECORDING_SECONDS:
+            if not messagebox.askyesno(
+                "Stop recording?", f"Recording started only {elapsed:.0f}s ago. Stop anyway?"
+            ):
+                return
+
+        # 2. Set the stop_event so the recording loop exits
         self.stop_event.set()
 
-        # 2. Disable the button and show a transitional status
+        # 3. Disable the button and show a transitional status
         self.toggle_button.config(state="disabled")
         self.status_label.config(text="Stopping...")
 
@@ -348,6 +393,7 @@ class App:
 
                 # 2. Apply the corresponding widget updates for each message type
                 if event == "recording_done":
+                    self.last_recording_seconds = time.time() - self.start_time
                     self.begin_transcription()
                 elif event == "status":
                     self.status_label.config(text=payload)
@@ -357,17 +403,18 @@ class App:
                 elif event == "done":
                     session_dir, used_fallback = payload
                     self.state = "DONE"
+                    short_note = self._short_recording_note()
                     if used_fallback:
                         self.status_label.config(text="Done (recovered without VAD)")
-                        self.saved_label.config(text=f"Please verify accuracy — silence can hallucinate. Last saved: {session_dir}")
+                        self.saved_label.config(text=f"{short_note}Please verify accuracy — silence can hallucinate. Last saved: {session_dir}")
                     else:
                         self.status_label.config(text="Done")
-                        self.saved_label.config(text=f"Last saved: {session_dir}")
+                        self.saved_label.config(text=f"{short_note}Last saved: {session_dir}")
                     self._reenable_controls()
                 elif event == "empty":
                     self.state = "IDLE"
                     self.status_label.config(text="No speech detected (even without VAD)")
-                    self.saved_label.config(text=f"Transcript was empty. WAV kept at: {payload}")
+                    self.saved_label.config(text=f"{self._short_recording_note()}Transcript was empty. WAV kept at: {payload}")
                     self._reenable_controls()
                 elif event == "error":
                     self.state = "IDLE"

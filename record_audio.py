@@ -7,6 +7,48 @@ import lameenc
 CHUNK = 1024
 
 
+def _keep_device_awake(audio, render_device, sample_format, stop_event):
+    """
+    This function is about writing silence to the real output device so Windows doesn't see it
+    as idle and power it down mid-recording, which breaks WASAPI loopback capture on long sessions.
+    The variable used in this code are:
+    audio: the open PyAudio instance
+    render_device: device info dict for the actual playback device (not the loopback pseudo-device)
+    sample_format: PyAudio sample format to open the stream with
+    stop_event: threading.Event that signals when to stop writing and exit
+
+    The flow process of this codes are as follows:
+    1. Open a real playback stream on the render device
+    2. Continuously write silent (zero) audio to it until stop_event is set
+    3. Close the stream on exit
+
+    The result of this function are as follows:
+    (none, runs until stop_event is set)
+    """
+    out_channels = render_device["maxOutputChannels"]
+    out_rate = int(render_device["defaultSampleRate"])
+
+    # 1. Open a real playback stream on the render device
+    keepalive_stream = audio.open(
+        format=sample_format,
+        channels=out_channels,
+        rate=out_rate,
+        output=True,
+        output_device_index=render_device["index"],
+        frames_per_buffer=CHUNK,
+    )
+    silence = b"\x00" * (CHUNK * out_channels * audio.get_sample_size(sample_format))
+
+    # 2. Continuously write silent audio until stop_event is set
+    try:
+        while not stop_event.is_set():
+            keepalive_stream.write(silence)
+    finally:
+        # 3. Close the stream on exit
+        keepalive_stream.stop_stream()
+        keepalive_stream.close()
+
+
 def record_system_audio(output_path, stop_event=None):
     """
     This function is about recording the laptop's system audio output (speaker/loopback) until stopped.
@@ -16,10 +58,11 @@ def record_system_audio(output_path, stop_event=None):
     used and recording continues until Ctrl+C (CLI use)
 
     The flow process of this codes are as follows:
-    1. Open PyAudio and find the default WASAPI loopback device
-    2. Open an input stream on that loopback device
+    1. Open PyAudio and find the real render device plus its matching WASAPI loopback device
+    2. Open an input stream on the loopback device, and start a background thread writing silence
+       to the real render device so Windows doesn't power it down as "idle" during long recordings
     3. Read audio chunks in a loop until stop_event is set (or Ctrl+C in CLI use)
-    4. Write all collected chunks to a WAV file at output_path
+    4. Stop the keep-alive thread, then write all collected chunks to a WAV file at output_path
 
     The result of this function are as follows:
     output_path: the path of the saved WAV file, same as the input argument
@@ -29,33 +72,38 @@ def record_system_audio(output_path, stop_event=None):
 
     with pyaudio.PyAudio() as audio:
 
-        # 1. Open PyAudio and find the default WASAPI loopback device
+        # 1. Open PyAudio and find the real render device plus its matching loopback device
         wasapi_info = audio.get_host_api_info_by_type(pyaudio.paWASAPI)
-        default_speakers = audio.get_device_info_by_index(wasapi_info["defaultOutputDevice"])
+        render_device = audio.get_device_info_by_index(wasapi_info["defaultOutputDevice"])
 
-        if not default_speakers["isLoopbackDevice"]:
+        loopback_device = render_device
+        if not loopback_device["isLoopbackDevice"]:
             for loopback in audio.get_loopback_device_info_generator():
-                if default_speakers["name"] in loopback["name"]:
-                    default_speakers = loopback
+                if render_device["name"] in loopback["name"]:
+                    loopback_device = loopback
                     break
             else:
                 raise RuntimeError("No loopback device found for default speakers")
 
-        channels = default_speakers["maxInputChannels"]
-        sample_rate = int(default_speakers["defaultSampleRate"])
+        channels = loopback_device["maxInputChannels"]
+        sample_rate = int(loopback_device["defaultSampleRate"])
         sample_format = pyaudio.paInt16
 
-        # 2. Open an input stream on that loopback device
+        # 2. Open the loopback input stream and start the keep-alive background thread
         stream = audio.open(
             format=sample_format,
             channels=channels,
             rate=sample_rate,
             input=True,
-            input_device_index=default_speakers["index"],
+            input_device_index=loopback_device["index"],
             frames_per_buffer=CHUNK,
         )
+        keepalive_thread = threading.Thread(
+            target=_keep_device_awake, args=(audio, render_device, sample_format, stop_event), daemon=True
+        )
+        keepalive_thread.start()
 
-        print(f"Recording system audio from: {default_speakers['name']}")
+        print(f"Recording system audio from: {loopback_device['name']}")
         print("Press Ctrl+C to stop recording...")
 
         # 3. Read audio chunks in a loop until stop_event is set (or Ctrl+C in CLI use)
@@ -67,8 +115,10 @@ def record_system_audio(output_path, stop_event=None):
         except KeyboardInterrupt:
             print("Recording stopped.")
         finally:
+            stop_event.set()
             stream.stop_stream()
             stream.close()
+            keepalive_thread.join(timeout=2)
 
         # 4. Write all collected chunks to a WAV file at output_path
         with wave.open(output_path, "wb") as wf:

@@ -46,6 +46,30 @@ def is_gpu_available():
     return ctranslate2.get_cuda_device_count() > 0
 
 
+def is_model_cached():
+    """
+    This function is about checking whether the Whisper model is already downloaded locally.
+    The variable used in this code are:
+    (none)
+
+    The flow process of this codes are as follows:
+    1. Ask faster-whisper to resolve the model with local_files_only=True (no network access)
+    2. If that succeeds, everything needed is already on disk; if it raises, a download is needed
+
+    The result of this function are as follows:
+    cached: True if the model can be loaded without downloading anything
+    """
+    from faster_whisper.utils import download_model
+
+    # 1. Ask faster-whisper to resolve the model using only local files
+    try:
+        download_model(MODEL_SIZE, local_files_only=True)
+        return True
+    except Exception:
+        # 2. Any failure here means the model isn't fully cached yet
+        return False
+
+
 def format_timestamp(seconds):
     """
     This function is about converting seconds into a [mm:ss] timestamp string.
@@ -149,7 +173,8 @@ def transcribe_audio(audio_path, output_path, progress_callback=None, device="au
     if device == "auto":
         device = "cuda" if is_gpu_available() else "cpu"
 
-    report_status(f"Loading model on {device} (first run downloads ~1.6GB, then cached)...")
+    cache_note = "already downloaded" if is_model_cached() else "first run downloads ~1.6GB"
+    report_status(f"Loading model on {device} ({cache_note})...")
     try:
         compute_type = "float16" if device == "cuda" else "int8"
         model = WhisperModel(MODEL_SIZE, device=device, compute_type=compute_type)
