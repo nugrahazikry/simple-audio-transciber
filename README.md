@@ -29,9 +29,12 @@ No coding or setup needed — just these steps:
 
 1. [**Download and extract AudioTranscriber-CPU.zip**](https://github.com/nugrahazikry/simple-audio-transciber/releases/latest/download/AudioTranscriber-CPU.zip) (~90MB) — right-click the downloaded zip → **Extract All**.
 2. Open the extracted folder and double-click `AudioTranscriber-CPU.exe` inside it. A small window titled "Audio Transcriber" pops up — nothing to install.
-3. Click **Start Recording**, then let your meeting or video play.
-4. Click **Stop** when finished — it transcribes automatically, no further clicks needed.
-5. Once it shows **Done**, the "Last saved" text tells you where your transcript was saved.
+3. (Optional) Click **Browse** to choose where transcripts are saved, and **Check Model** to see if the Whisper model is already downloaded (green dot = found).
+4. Click **Start Recording**, then let your meeting or video play.
+5. Click **Stop Recording** when finished — it transcribes automatically, no further clicks needed.
+6. Once it shows **Done**, the "Last saved" text tells you where your transcript was saved.
+
+> The first transcription downloads the model (~1.6GB) and needs at least 2GB of free disk space. If the disk is too full or the download fails or stalls, the app shows a clear message — free up space or check your internet connection, then try again.
 
 > If Windows SmartScreen or your antivirus flags the exe, this is a known false positive with unsigned PyInstaller-built apps, not an actual virus — click **More info → Run anyway**, or see [this note](#a-note-on-antivirus-warnings) below.
 
@@ -40,7 +43,7 @@ Prefer to run it from source code instead (for developers)? See [Run the project
 
 ## Apps Features
 
-The application consists of five main features.
+The application consists of six main features.
 
 ### 1. System Audio Recording
 Records whatever plays through your speakers via WASAPI loopback — Meet, Teams, Slack huddles, YouTube, any app. Does **not** record your microphone.
@@ -49,13 +52,16 @@ Records whatever plays through your speakers via WASAPI loopback — Meet, Teams
 Transcribes with `faster-whisper` (`large-v3-turbo`). Uses your NVIDIA GPU automatically when one is detected, otherwise runs on CPU — no setup needed either way. If a GPU is available, the GUI shows a GPU/CPU toggle so you can pick manually. A live 0–100% progress bar tracks transcription either way.
 
 ### 3. One-Click Desktop GUI
-A small popup window (`gui.py`) — Start/Stop button, live elapsed timer, progress bar, and the saved file location. No terminal required once set up.
+A small popup window (`gui.py`) — output folder picker, model check, GPU/CPU choice, one Start/Stop button, live elapsed timer, progress bar, and the saved file location. No terminal required once set up.
 
 ### 4. Timestamped Transcripts
 Every line is tagged with a `[mm:ss]` timestamp matching the recording.
 
 ### 5. Small Storage Footprint
 Recordings are saved as 64kbps mono MP3 (not raw WAV) — roughly 480KB per minute — auto-deleted-and-replaced right after a successful transcript.
+
+### 6. Model Check and Download Safeguards
+**Check Model** shows whether the Whisper model is already on your PC (green "Model found" or red "Model not found"), and the status line shows where it is stored. Before downloading, the app checks for at least 2GB of free disk space, and a download with no progress for 5 minutes stops with an error instead of hanging.
 
 
 ## A Note on Antivirus Warnings
@@ -120,7 +126,7 @@ audio transciption/
 
 ### Model download
 
-The `large-v3-turbo` model downloads automatically the first time you transcribe anything, and is cached afterward — no manual step needed for most people.
+The `large-v3-turbo` model downloads automatically the first time you transcribe anything, and is cached afterward — no manual step needed for most people. It needs at least 2GB of free disk space, and a download with no progress for 5 minutes fails with an error message.
 
 If downloads are slow or rate-limited, you can optionally speed them up with a free Hugging Face token: create a `.env` file in the project root with `HF_TOKEN=your_token_here` (get one at [huggingface.co](https://huggingface.co/) → Settings → Access Tokens). This is purely a download-speed optimization, not a requirement to run the app.
 
@@ -134,9 +140,9 @@ If downloads are slow or rate-limited, you can optionally speed them up with a f
 | Category | File | Description |
 |---|---|---|
 | Recording | `record_audio.py` | Opens the default WASAPI loopback device, records until stopped (via `stop_event` or Ctrl+C), and converts the result to a small mono MP3 |
-| Transcription | `transcribe.py` | Auto-detects a usable GPU (`is_gpu_available()`) and loads `faster-whisper` on GPU or CPU accordingly, with a live fallback to CPU if GPU loading fails; transcribes with tuned settings (`vad_filter=True`, `condition_on_previous_text=False` — measured best after testing 7+ configurations) |
+| Transcription | `transcribe.py` | Auto-detects a usable GPU (`is_gpu_available()`) and loads `faster-whisper` on GPU or CPU accordingly, with a live fallback to CPU if GPU loading fails; checks free disk space (2GB) and applies a 5-minute no-progress download timeout before downloading the model; transcribes with tuned settings (`vad_filter=True`, `condition_on_previous_text=False` — measured best after testing 7+ configurations) |
 | CLI entry point | `main.py` | Runs record → transcribe → convert-to-MP3 in sequence, controlled via Ctrl+C |
-| GUI entry point | `gui.py` | tkinter popup; runs recording/transcription on background threads, coordinated via `queue.Queue` + `root.after()` polling |
+| GUI entry point | `gui.py` | tkinter popup with output folder picker, model check and a single Start/Stop button; runs recording/transcription on background threads, coordinated via `queue.Queue` + `root.after()` polling |
 
 
 ## Run the project locally
@@ -172,9 +178,10 @@ python main.py
 ```
 
 **5. Record and transcribe:**
+- Optionally pick the output folder with **Browse** and confirm the model with **Check Model**.
 - Click **Start Recording**, then let the meeting/video play — the elapsed timer counts up live.
-- Click **Stop** when finished — transcription starts automatically, progress bar fills as it runs.
-- Once status shows **Done**, the "Last saved" path points to `output/<date>/<timestamp>/`, containing the `.mp3` and `.txt` transcript.
+- Click **Stop Recording** when finished — transcription starts automatically, progress bar fills as it runs.
+- Once status shows **Done**, the "Last saved" path points to `<output folder>/<date>/<timestamp>/` (default `output/`), containing the `.mp3` and `.txt` transcript.
 
 
 ## Create a Desktop Shortcut
