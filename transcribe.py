@@ -1,6 +1,13 @@
 import os
+import shutil
 import sys
+
+# must be set before huggingface_hub is imported: error out after 5 min with no bytes received
+os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "300")
+
 from faster_whisper import WhisperModel
+from faster_whisper.utils import download_model
+from huggingface_hub.constants import HF_HUB_CACHE
 from tqdm import tqdm
 
 try:
@@ -21,6 +28,11 @@ if NVIDIA_PACKAGES_AVAILABLE and sys.platform == "win32":
     os.environ["PATH"] = os.pathsep.join(cuda_dll_dirs) + os.pathsep + os.environ["PATH"]
 
 MODEL_SIZE = "large-v3-turbo"
+MIN_FREE_GB = 2
+
+
+class ModelSetupError(Exception):
+    """Raised when the model can't be downloaded; the message is already user-friendly."""
 
 
 def is_gpu_available():
@@ -59,8 +71,6 @@ def is_model_cached():
     The result of this function are as follows:
     cached: True if the model can be loaded without downloading anything
     """
-    from faster_whisper.utils import download_model
-
     # 1. Ask faster-whisper to resolve the model using only local files
     try:
         download_model(MODEL_SIZE, local_files_only=True)
@@ -68,6 +78,61 @@ def is_model_cached():
     except Exception:
         # 2. Any failure here means the model isn't fully cached yet
         return False
+
+
+def has_enough_disk_space():
+    """
+    This function is about checking whether the model cache drive has enough free space.
+    The variable used in this code are:
+    (none)
+
+    The flow process of this codes are as follows:
+    1. Make sure the cache folder exists so its drive can be measured
+    2. Read the free space on that drive and compare it with MIN_FREE_GB
+
+    The result of this function are as follows:
+    enough: True if at least MIN_FREE_GB is free
+    free_gb: the free space in GB
+    """
+
+    # 1. Make sure the cache folder exists
+    os.makedirs(HF_HUB_CACHE, exist_ok=True)
+
+    # 2. Read the free space and compare it with the minimum
+    free_gb = shutil.disk_usage(HF_HUB_CACHE).free / 1024**3
+    return free_gb >= MIN_FREE_GB, free_gb
+
+
+def download_model_files():
+    """
+    This function is about downloading the Whisper model with clear errors for the user.
+    The variable used in this code are:
+    (none)
+
+    The flow process of this codes are as follows:
+    1. Stop with a friendly error if the cache drive has less than MIN_FREE_GB free
+    2. Download the model, turning any connection or timeout failure into a friendly error
+
+    The result of this function are as follows:
+    (none, raises ModelSetupError on failure)
+    """
+
+    # 1. Stop if there is not enough free disk space
+    enough, free_gb = has_enough_disk_space()
+    if not enough:
+        drive = os.path.splitdrive(HF_HUB_CACHE)[0] or HF_HUB_CACHE
+        raise ModelSetupError(
+            f"Not enough disk space: {MIN_FREE_GB}GB needed, {free_gb:.1f}GB free on {drive}. "
+            "Free up space, then try again."
+        )
+
+    # 2. Download the model, turning any failure into a friendly error
+    try:
+        download_model(MODEL_SIZE)
+    except Exception as e:
+        raise ModelSetupError(
+            f"Download failed or stalled. Check your internet connection, then try again. ({type(e).__name__})"
+        ) from e
 
 
 def format_timestamp(seconds):
@@ -173,8 +238,12 @@ def transcribe_audio(audio_path, output_path, progress_callback=None, device="au
     if device == "auto":
         device = "cuda" if is_gpu_available() else "cpu"
 
-    cache_note = "already downloaded" if is_model_cached() else "first run downloads ~1.6GB"
-    report_status(f"Loading model on {device} ({cache_note})...")
+    device_name = "GPU" if device == "cuda" else "CPU"
+    if is_model_cached():
+        report_status(f"Loading model on {device_name} from {HF_HUB_CACHE}...")
+    else:
+        report_status(f"Downloading model (~1.6GB) to {HF_HUB_CACHE}...")
+        download_model_files()
     try:
         compute_type = "float16" if device == "cuda" else "int8"
         model = WhisperModel(MODEL_SIZE, device=device, compute_type=compute_type)
