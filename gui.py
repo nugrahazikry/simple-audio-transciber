@@ -16,6 +16,7 @@ load_dotenv()
 from record_audio import record_system_audio, convert_wav_to_mp3
 from transcribe import transcribe_audio, is_gpu_available
 
+VERSION = "1.0.0"
 OUTPUT_DIR = "output"
 DEBOUNCE_SECONDS = 0.5
 SHORT_RECORDING_SECONDS = 5
@@ -41,7 +42,7 @@ class App:
 
         # 1. Store the root window and initialize state and a thread-safe message queue
         self.root = root
-        self.root.title("Audio Transcriber")
+        self.root.title(f"Audio Transcriber v{VERSION}")
         self.root.geometry("300x250")
         self.root.resizable(False, False)
 
