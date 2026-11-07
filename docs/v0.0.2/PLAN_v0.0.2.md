@@ -24,7 +24,7 @@ Impact: **High** = touches audio capture, transcription flow, or the whole windo
 | 15 | Rebuild the exe into a new folder and test that it starts and records. | Release | `AudioTranscriber-CPU.spec` (unchanged); `builds/v0.0.2/` (old v1.0.0 build deleted; it is on GitHub) | **Low** — separate folder | Exe shows v1.0.1 and records. Zip made (`builds/v0.0.2/AudioTranscriber-CPU.zip`, 90.7 MB); a copy extracted from it launches with Auto unticked and My mic OFF. Rebuilt with the new UI (step 19); a real click on Start Recording works in the exe. Not verified in exe: waveform with sound, Meet Auto, full transcription | ✅ |
 | 16 | Add `comtypes` to `requirements.txt` and write the change log. | Release | `requirements.txt`; `docs/v0.0.2/CHANGELOG_v0.0.2.md` | **Low** — text only | Both files exist and match the work done | ✅ |
 | 17 | Commit the changes locally on a feature branch. | Release | Commit `2f58557` (features) and a second commit (UI redesign) on `feature/waveform-mic-sharp-text`; `main` untouched | **Low** — local only, nothing pushed | `git log` shows the commit; working tree clean except one local log file left out on purpose | ✅ |
-| 18 | Push the branch, open a pull request, and publish the zip on GitHub. | Release | None yet | **High** — visible to others, hard to undo | Owner go-ahead. On hold: owner said not to continue | ✋ |
+| 18 | Push the branch, open a pull request, and publish the zip on GitHub. | Release | Branch pushed; pull request #1 opened into `main` (not merged); the zip on the GitHub release v1.0.1 replaced with the new build | **High** — visible to others | Owner go-ahead given. GitHub's SHA-256 of the zip matches the local zip (`032161c9…`). Old v1.0.1 zip backed up in `builds/previous-release-v1.0.1/` (SHA-256 verified). The v1.0.1 tag still points to the old source code | ✅ |
 | 19 | Redesign the window as the "Modern Recording Deck" (own plan: `PLAN_UI_redesign.md`, steps U1–U16). | C1–C5 look | New `ui_theme.py`, `ui_components.py`; `gui.py` layout and state styling | **High** — whole window; recording logic untouched | 30 of 30 control checks, full record to transcript run, 100/125/150% layouts, exe click test. Owner: "good enough" | ✅ |
 
 ## Notes
@@ -34,6 +34,7 @@ Impact: **High** = touches audio capture, transcription flow, or the whole windo
 - Step 8 depends on Q6 (imports-at-top rule). Skip it if the exception is not approved.
 - Each step needs your explicit go-ahead before implementation starts.
 - Still open: step 1 (Q7, Q10), step 11b (Auto, parked), step 12 (CLI, waits on Q7).
-- On hold: steps 3 and 7 (start-up is good enough), step 8 (skipped), step 18 (push and publish, owner said not to continue).
+- On hold: steps 3 and 7 (start-up is good enough), step 8 (skipped).
+- Published (step 18): the release v1.0.1 zip is the new build; the old zip is only in the local backup. The pull request is not merged, so `main` and the v1.0.1 tag still hold the old source.
 - UI redesign (Modern Recording Deck) has its own plan, `PLAN_UI_redesign.md`. Done (step 19).
 - Version: the GitHub release 1.0.1 already exists. Owner decision: every build here stays 1.0.1.
