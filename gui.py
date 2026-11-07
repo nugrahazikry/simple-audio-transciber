@@ -7,7 +7,7 @@ import tkinter as tk
 import warnings
 from collections import deque
 from datetime import datetime
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox
 
 warnings.filterwarnings("ignore")
 
@@ -18,129 +18,16 @@ load_dotenv()
 from meeting_mic import watch_meet_mic
 from record_audio import record_system_audio, convert_wav_to_mp3
 from transcribe import ModelSetupError, transcribe_audio, is_gpu_available, is_model_cached
+import ui_theme as ui
+from ui_components import AppHeader, ConfigSection, RecordingDeck, StatusSection
 
 VERSION = "1.0.1"
 OUTPUT_DIR = "output"
 DEBOUNCE_SECONDS = 0.5
 SHORT_RECORDING_SECONDS = 5
-BLUE = "#0A56D6"
-BLUE_ACTIVE = "#0847B0"
-BLUE_DISABLED = "#8DB0EC"
-WINDOW_WIDTH = 450
-WRAP_WIDTH = 410
-WAVE_WIDTH = 410
-WAVE_HEIGHT = 48
 WAVE_BARS = 60
-WAVE_BG = "#F7F9FC"
-WAVE_BORDER = "#C8CED6"
 POLL_MS = 50
-
-
-class RoundedButton(tk.Canvas):
-    def __init__(self, parent, text, command, width=150, height=46, radius=10):
-        """
-        This function is about building a blue button with rounded corners (tkinter has none built in).
-        The variable used in this code are:
-        parent: the widget that holds the button
-        text: the text shown on the button
-        command: the function called when the button is clicked
-        width: button width in pixels
-        height: button height in pixels
-        radius: corner radius in pixels
-
-        The flow process of this codes are as follows:
-        1. Create the canvas with the parent's background and store the settings
-        2. Draw the button and bind hover and click events
-
-        The result of this function are as follows:
-        (none, builds the button widget)
-        """
-
-        # 1. Create the canvas and store the settings
-        super().__init__(parent, width=width, height=height, bg="white", highlightthickness=0, cursor="hand2")
-        self.command = command
-        self.text = text
-        self.radius = radius
-        self.enabled = True
-
-        # 2. Draw the button and bind events
-        self._draw(BLUE)
-        self.bind("<Enter>", lambda e: self.enabled and self._draw(BLUE_ACTIVE))
-        self.bind("<Leave>", lambda e: self._draw(BLUE if self.enabled else BLUE_DISABLED))
-        self.bind("<ButtonRelease-1>", self._on_click)
-
-    def _draw(self, color):
-        """
-        This function is about drawing the rounded rectangle and its text.
-        The variable used in this code are:
-        color: the fill colour of the button
-
-        The flow process of this codes are as follows:
-        1. Clear the canvas
-        2. Draw four corner arcs and two rectangles that form the rounded rectangle
-        3. Draw the white text in the centre
-
-        The result of this function are as follows:
-        (none)
-        """
-        w, h, r = int(self["width"]), int(self["height"]), self.radius
-
-        # 1. Clear the canvas
-        self.delete("all")
-
-        # 2. Draw the rounded rectangle
-        d = 2 * r
-        self.create_arc(0, 0, d, d, start=90, extent=90, fill=color, outline=color)
-        self.create_arc(w - d, 0, w, d, start=0, extent=90, fill=color, outline=color)
-        self.create_arc(0, h - d, d, h, start=180, extent=90, fill=color, outline=color)
-        self.create_arc(w - d, h - d, w, h, start=270, extent=90, fill=color, outline=color)
-        self.create_rectangle(r, 0, w - r, h, fill=color, outline=color)
-        self.create_rectangle(0, r, w, h - r, fill=color, outline=color)
-
-        # 3. Draw the text
-        self.create_text(w / 2, h / 2, text=self.text, fill="white", font=("Segoe UI", 11))
-
-    def _on_click(self, event):
-        """
-        This function is about running the command when the button is clicked inside its area.
-        The variable used in this code are:
-        event: the mouse release event
-
-        The flow process of this codes are as follows:
-        1. Run the command only if the button is enabled and the release happened on the button
-
-        The result of this function are as follows:
-        (none)
-        """
-
-        # 1. Run the command if enabled and released inside the button
-        if self.enabled and 0 <= event.x <= int(self["width"]) and 0 <= event.y <= int(self["height"]):
-            self.command()
-
-    def config(self, text=None, state=None):
-        """
-        This function is about changing the button text or enabled state like a normal button.
-        The variable used in this code are:
-        text: the new text, or None to keep it
-        state: "normal" or "disabled", or None to keep it
-
-        The flow process of this codes are as follows:
-        1. Store the new text and state
-        2. Redraw with the matching colour and cursor
-
-        The result of this function are as follows:
-        (none)
-        """
-
-        # 1. Store the new text and state
-        if text is not None:
-            self.text = text
-        if state is not None:
-            self.enabled = state == "normal"
-
-        # 2. Redraw
-        self._draw(BLUE if self.enabled else BLUE_DISABLED)
-        super().config(cursor="hand2" if self.enabled else "arrow")
+WAVE_COLORS = {"RECORDING": ui.BAR_ACTIVE, "TRANSCRIBING": ui.BAR_SUBDUED}
 
 
 class App:
@@ -154,8 +41,8 @@ class App:
         1. Store the root window and initialize state (IDLE) and a thread-safe message queue
         2. Detect whether a usable GPU is available (only offer the GPU option if so), and work
            out the screen scale factor so fixed pixel sizes stay proportional on scaled displays
-        3. Build and lay out all widgets (output folder, model check, device choice, mic switch,
-           timer, waveform, start button, status, progress bar, saved-path label)
+        3. Build the four sections (header, OUTPUT/DEVICE cards, recording deck, status bar) and
+           keep the widget names the rest of the code uses
         4. Start polling the message queue for updates from background threads
 
         The result of this function are as follows:
@@ -183,122 +70,84 @@ class App:
         self.gpu_available = is_gpu_available()
         self.device_var = tk.StringVar(value="cuda" if self.gpu_available else "cpu")
         self.scale = self.root.winfo_fpixels("1i") / 96
-        self.wave_width = self._px(WAVE_WIDTH)
-        self.wave_height = self._px(WAVE_HEIGHT)
-        self.wrap_width = self._px(WRAP_WIDTH)
+        self.theme = ui.Theme(self.root, self.scale)
+        self.wave_color = ui.BAR_IDLE
 
-        # 3. Build and lay out all widgets
-        self._apply_style()
-        self.root.configure(bg="white")
-        self.root.minsize(self._px(WINDOW_WIDTH), 1)
-        body = ttk.Frame(root, padding=(16, 16, 14, 24))
-        body.pack(fill="both", expand=True)
+        # 3. Build the four sections
+        self.root.configure(bg=ui.BG)
+        self.root.minsize(self._px(ui.WINDOW_WIDTH), 1)
+        AppHeader(root, self.theme).pack(fill="x")
+        page = tk.Frame(root, bg=ui.BG, padx=self._px(ui.PAGE_PAD), pady=self._px(ui.GAP))
+        page.pack(fill="both", expand=True)
 
-        folder_row = ttk.Frame(body)
-        folder_row.pack(fill="x")
-        ttk.Label(folder_row, text="Output Folder").pack(side="left")
-        self.browse_button = ttk.Button(folder_row, text="Browse", width=8, command=self.on_browse)
-        self.browse_button.pack(side="right")
         self.folder_var = tk.StringVar(value=self._short_path(self.output_dir))
-        self.folder_entry = ttk.Entry(folder_row, textvariable=self.folder_var, validate="key", validatecommand=lambda: False)
-        self.folder_entry.pack(side="left", fill="x", expand=True, padx=(12, 10), ipady=3)
-
-        model_row = ttk.Frame(body)
-        model_row.pack(fill="x", pady=(12, 0))
-        self.check_button = ttk.Button(model_row, text="Check Model", width=12, command=self.on_check_model)
-        self.check_button.pack(side="left")
-        dot = self._px(12)
-        self.model_dot = tk.Canvas(model_row, width=dot, height=dot, bg=self.root.cget("bg"), highlightthickness=0)
-        self.model_dot.pack(side="left", padx=(16, 6))
-        self.model_dot_id = self.model_dot.create_oval(1, 1, dot - 1, dot - 1, fill="#22A722", outline="")
-        self.model_label = ttk.Label(model_row, text="")
-        self.model_label.pack(side="left")
-
-        self.device_frame = ttk.Frame(body)
-        self.device_frame.pack(anchor="w", pady=(14, 0))
-        ttk.Label(self.device_frame, text="Device:").pack(side="left")
-        if self.gpu_available:
-            self.gpu_radio = ttk.Radiobutton(self.device_frame, text="GPU", variable=self.device_var, value="cuda")
-            self.gpu_radio.pack(side="left", padx=(6, 0))
-        else:
-            self.gpu_radio = None
-        self.cpu_radio = ttk.Radiobutton(self.device_frame, text="CPU", variable=self.device_var, value="cpu")
-        self.cpu_radio.pack(side="left", padx=(6, 0))
-
-        mic_row = ttk.Frame(body)
-        mic_row.pack(anchor="w", pady=(10, 0))
         self.mic_var = tk.BooleanVar(value=False)
-        self.mic_check = ttk.Checkbutton(mic_row, text="My mic: OFF", variable=self.mic_var, command=self.on_mic_toggle)
-        self.mic_check.pack(side="left")
         self.auto_var = tk.BooleanVar(value=False)
-        self.auto_check = ttk.Checkbutton(
-            mic_row, text="Auto: follow Meet mute", variable=self.auto_var, command=self.on_auto_toggle
-        )
-        self.auto_check.pack(side="left", padx=(16, 0))
+        commands = {
+            "browse": self.on_browse,
+            "check_model": self.on_check_model,
+            "mic": self.on_mic_toggle,
+            "auto": self.on_auto_toggle,
+        }
+        cards = ConfigSection(page, self.theme, self.folder_var, self.device_var, self.gpu_available, self.mic_var, self.auto_var, commands)
+        cards.pack(fill="x")
+        self.folder_entry = cards.folder_entry
+        self.browse_button = cards.browse_button
+        self.check_button = cards.check_button
+        self.model_dot = cards.model_dot
+        self.model_dot_id = cards.model_dot_id
+        self.model_label = cards.model_label
+        self.gpu_radio = cards.gpu_radio
+        self.cpu_radio = cards.cpu_radio
+        self.mic_check = cards.mic_check
+        self.auto_check = cards.auto_check
         self._refresh_mic_controls()
 
-        self.timer_label = ttk.Label(body, text="00:00", font=("Segoe UI", 28))
-        self.timer_label.pack(pady=(8, 2))
-
+        self.deck = RecordingDeck(page, self.theme, self.on_toggle)
+        self.deck.pack(fill="x", pady=(self._px(ui.GAP), 0))
+        self.timer_label = self.deck.timer_label
+        self.wave_canvas = self.deck.wave_canvas
+        self.wave_width = self.deck.wave_width
+        self.wave_height = self.deck.wave_height
+        self.toggle_button = self.deck.toggle_button
         self.wave_levels = deque([0.0] * WAVE_BARS, maxlen=WAVE_BARS)
-        self.wave_canvas = tk.Canvas(body, width=self.wave_width, height=self.wave_height, bg=WAVE_BG, highlightthickness=0)
-        self.wave_canvas.pack(pady=(0, 4))
         self._draw_waveform()
 
-        self.toggle_button = RoundedButton(
-            body,
-            text="Start Recording",
-            command=self.on_toggle,
-            width=self._px(150),
-            height=self._px(46),
-            radius=self._px(10),
-        )
-        self.toggle_button.pack(pady=(4, 8))
-
-        self.status_label = ttk.Label(body, text="Idle", wraplength=self.wrap_width, justify="center")
-        self.status_label.pack()
-
-        self.progress_bar = ttk.Progressbar(body, mode="determinate", maximum=100)
-        self.progress_bar.pack(fill="x", pady=(8, 0))
-
-        footer = ttk.Frame(body)
-        footer.pack(fill="x")
-        self.progress_label = ttk.Label(footer, text="")
-        self.progress_label.grid(row=0, column=0)
-        self.saved_label = ttk.Label(footer, text="", wraplength=self.wrap_width, justify="center")
-        self.saved_label.grid(row=1, column=0)
-        footer.columnconfigure(0, weight=1)
-        self.progress_label.grid_remove()
-        self.saved_label.grid_remove()
+        self.status_section = StatusSection(page, self.theme)
+        self.status_section.pack(fill="x", pady=(self._px(ui.GAP), 0))
+        self.status_label = self.status_section.status_label
+        self.progress_bar = self.status_section.progress_bar
+        self.progress_label = self.status_section.progress_label
+        self.saved_label = self.status_section.saved_label
         self.on_check_model()
 
         # 4. Start polling the message queue for updates from background threads
         self.root.after(POLL_MS, self.poll_queue)
 
-    def _apply_style(self):
+    def _apply_visual_state(self, name):
         """
-        This function is about giving the ttk widgets the native Windows look.
+        This function is about restyling the window for the current app state.
         The variable used in this code are:
-        (none)
+        name: "IDLE", "RECORDING", "TRANSCRIBING", "DONE" or "ERROR"
 
         The flow process of this codes are as follows:
-        1. Switch to the native Windows theme (grey background and native radio buttons like v1)
-        2. Set white backgrounds and the same font on labels, radios and buttons
+        1. Update the status dot, word and progress bar
+        2. Update the microphone circle on the recording deck
+        3. Pick the waveform color for the state and redraw the waveform
 
         The result of this function are as follows:
         (none)
         """
-        style = ttk.Style()
 
-        # 1. Switch to the native Windows theme
-        style.theme_use("vista")
+        # 1. Status dot, word and progress bar
+        self.status_section.set_state(name)
 
-        # 2. White backgrounds and the same font on labels, radios and buttons
-        for name in ("TFrame", "TLabel", "TRadiobutton", "TCheckbutton"):
-            style.configure(name, background="white")
-            style.map(name, background=[("active", "white")])
-        for name in ("TLabel", "TRadiobutton", "TCheckbutton", "TButton"):
-            style.configure(name, font=("Segoe UI", 9))
+        # 2. Microphone circle
+        self.deck.set_state(name)
+
+        # 3. Waveform color
+        self.wave_color = WAVE_COLORS.get(name, ui.BAR_IDLE)
+        self._draw_waveform()
 
     def _px(self, pixels):
         """
@@ -314,7 +163,7 @@ class App:
         """
 
         # 1. Multiply by the scale factor and round
-        return round(pixels * self.scale)
+        return self.theme.px(pixels)
 
     def _draw_waveform(self):
         """
@@ -323,29 +172,29 @@ class App:
         (none)
 
         The flow process of this codes are as follows:
-        1. Clear the waveform canvas and draw the box around it
-        2. Draw one vertical bar per stored level inside the box, centred, at least 1px tall so
-           silence is a flat line
+        1. Clear the waveform canvas
+        2. Draw one centred rounded bar per stored level in the current state's color; silence
+           stays a dotted baseline
 
         The result of this function are as follows:
         (none)
         """
 
-        # 1. Clear the canvas and draw the box
+        # 1. Clear the canvas
         self.wave_canvas.delete("all")
-        self.wave_canvas.create_rectangle(
-            0, 0, self.wave_width - 1, self.wave_height - 1, outline=WAVE_BORDER, fill=WAVE_BG
-        )
 
-        # 2. Draw one centred vertical bar per stored level inside the box
+        # 2. Draw one centred rounded bar per stored level
         pad = self._px(6)
         step = (self.wave_width - 2 * pad) / WAVE_BARS
         mid = self.wave_height / 2
-        room = mid - self._px(4)
+        bar_width = max(2, self._px(4))
+        room = mid - bar_width / 2 - self._px(1)
         for i, level in enumerate(self.wave_levels):
             half = max(0.5, min(1.0, level) * room)
             x = pad + i * step + step / 2
-            self.wave_canvas.create_line(x, mid - half, x, mid + half, fill=BLUE, width=max(1, step - 2))
+            self.wave_canvas.create_line(
+                x, mid - half, x, mid + half, fill=self.wave_color, width=bar_width, capstyle="round"
+            )
 
     def _reset_waveform(self):
         """
@@ -574,8 +423,10 @@ class App:
         found = is_model_cached()
 
         # 2. Show the result
-        self.model_dot.itemconfig(self.model_dot_id, fill="#22A722" if found else "#D93025")
-        self.model_label.config(text="Model found" if found else "Model not found")
+        self.model_dot.itemconfig(self.model_dot_id, fill=ui.GREEN if found else ui.RED)
+        self.model_label.config(
+            text="Model found" if found else "Model not found", fg=ui.GREEN_TEXT if found else ui.RED_TEXT
+        )
 
     def on_toggle(self):
         """
@@ -688,6 +539,7 @@ class App:
         self.start_time = time.time()
         self._reset_waveform()
         self._set_setup_controls("disabled")
+        self._apply_visual_state("RECORDING")
 
         # 3. Start the recording worker thread, the live timer tick, and the Meet watcher (auto mode)
         self.tick_timer()
@@ -803,6 +655,8 @@ class App:
         # 1. Update state and status label
         self.state = "TRANSCRIBING"
         self.status_label.config(text="Transcribing...")
+        self.toggle_button.config(text="Start Recording", state="disabled")
+        self._apply_visual_state("TRANSCRIBING")
 
         # 2. Start the transcription worker thread with the device chosen on the main thread
         selected_device = self.device_var.get()
@@ -922,15 +776,18 @@ class App:
                         self.status_label.config(text="Done")
                         self._set_text(self.saved_label, f"{short_note}Last saved: {session_dir}")
                     self._reenable_controls()
+                    self._apply_visual_state("DONE")
                 elif event == "empty":
                     self.state = "IDLE"
                     self.status_label.config(text="No speech detected (even without VAD)")
                     self._set_text(self.saved_label, f"{self._short_recording_note()}Transcript was empty. WAV kept at: {payload}")
                     self._reenable_controls()
+                    self._apply_visual_state("IDLE")
                 elif event == "error":
                     self.state = "IDLE"
                     self.status_label.config(text=f"Error: {payload}")
                     self._reenable_controls()
+                    self._apply_visual_state("ERROR")
         except queue.Empty:
             pass
 
