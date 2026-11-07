@@ -46,13 +46,13 @@ Prefer to run it from source code instead (for developers)? See [Run the project
 The application consists of six main features.
 
 ### 1. System Audio Recording
-Records whatever plays through your speakers via WASAPI loopback — Meet, Teams, Slack huddles, YouTube, any app. Does **not** record your microphone.
+Records whatever plays through your speakers via WASAPI loopback — Meet, Teams, Slack huddles, YouTube, any app. Also records your microphone and mixes it in when the **My mic** switch is ON, so your own voice is in the transcript. With **Auto: follow Meet mute** ticked (it starts unticked), the app reads the mute button of a Google Meet tab in Chrome (English labels, tab must be visible) and turns your mic ON or OFF for you; if no Meet button is visible for 3 seconds, the mic goes OFF. By default Auto is off: tick **My mic** yourself when you want your voice recorded (it starts OFF and can be flipped during a recording). If no microphone is available, the app records system audio only.
 
 ### 2. GPU-Accelerated Transcription, with CPU Fallback
 Transcribes with `faster-whisper` (`large-v3-turbo`). Uses your NVIDIA GPU automatically when one is detected, otherwise runs on CPU — no setup needed either way. If a GPU is available, the GUI shows a GPU/CPU toggle so you can pick manually. A live 0–100% progress bar tracks transcription either way.
 
 ### 3. One-Click Desktop GUI
-A small popup window (`gui.py`) — output folder picker, model check, GPU/CPU choice, one Start/Stop button, live elapsed timer, progress bar, and the saved file location. No terminal required once set up.
+A small light-blue window (`gui.py`) laid out as a recording deck — an OUTPUT card (folder picker, model check) and a DEVICE card (GPU/CPU choice, **My mic** and **Auto** options), a large timer with a live waveform and one Start/Stop button, and a status line with a progress bar and the saved file location. The button turns red while recording, and a moving bar shows until a real transcription percentage is known. No terminal required once set up.
 
 ### 4. Timestamped Transcripts
 Every line is tagged with a `[mm:ss]` timestamp matching the recording.
@@ -83,7 +83,10 @@ If you'd rather verify the source first, every line of this project is open in t
 ```
 audio transciption/
 ├── main.py              # CLI entry point (Ctrl+C to stop)
-├── gui.py                # GUI entry point (tkinter)
+├── gui.py                # GUI entry point (tkinter): window logic and state handling
+├── ui_theme.py           # GUI colors, fonts and sizes
+├── ui_components.py      # GUI widgets: header, cards, recording deck, status bar, buttons
+├── meeting_mic.py        # Optional: reads Google Meet's mute button (Auto option)
 ├── record_audio.py       # WASAPI loopback recording + WAV-to-MP3 conversion
 ├── transcribe.py         # faster-whisper transcription (GPU if available, else CPU)
 ├── requirements.txt      # Python dependencies
@@ -108,6 +111,7 @@ audio transciption/
 | faster-whisper | latest | Whisper transcription engine (GPU via ctranslate2) |
 | PyAudioWPatch | latest | WASAPI loopback audio recording |
 | lameenc | latest | Pure-Python MP3 encoding (no ffmpeg needed) |
+| comtypes | latest | Windows UI Automation, used by the optional Auto option to read Google Meet's mute button |
 | numpy | latest | Audio sample handling (stereo-to-mono downmix) |
 | python-dotenv | latest | Loads an optional `HF_TOKEN` from `.env`, if present |
 | tqdm | latest | CLI progress bars |
@@ -142,7 +146,7 @@ If downloads are slow or rate-limited, you can optionally speed them up with a f
 | Recording | `record_audio.py` | Opens the default WASAPI loopback device, records until stopped (via `stop_event` or Ctrl+C), and converts the result to a small mono MP3 |
 | Transcription | `transcribe.py` | Auto-detects a usable GPU (`is_gpu_available()`) and loads `faster-whisper` on GPU or CPU accordingly, with a live fallback to CPU if GPU loading fails; checks free disk space (2GB) and applies a 5-minute no-progress download timeout before downloading the model; transcribes with tuned settings (`vad_filter=True`, `condition_on_previous_text=False` — measured best after testing 7+ configurations) |
 | CLI entry point | `main.py` | Runs record → transcribe → convert-to-MP3 in sequence, controlled via Ctrl+C |
-| GUI entry point | `gui.py` | tkinter popup with output folder picker, model check and a single Start/Stop button; runs recording/transcription on background threads, coordinated via `queue.Queue` + `root.after()` polling |
+| GUI entry point | `gui.py` | tkinter window with output folder picker, model check, device and mic options and a single Start/Stop button; runs recording/transcription on background threads, coordinated via `queue.Queue` + `root.after()` polling; the look comes from `ui_theme.py` and `ui_components.py` (drawn on tkinter canvases, no extra libraries) |
 
 
 ## Run the project locally
