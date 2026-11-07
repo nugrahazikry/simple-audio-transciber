@@ -1,9 +1,11 @@
+import ctypes
 import os
 import queue
 import threading
 import time
 import tkinter as tk
 import warnings
+from collections import deque
 from datetime import datetime
 from tkinter import filedialog, messagebox, ttk
 
@@ -13,6 +15,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from meeting_mic import watch_meet_mic
 from record_audio import record_system_audio, convert_wav_to_mp3
 from transcribe import ModelSetupError, transcribe_audio, is_gpu_available, is_model_cached
 
@@ -24,6 +27,13 @@ BLUE = "#0A56D6"
 BLUE_ACTIVE = "#0847B0"
 BLUE_DISABLED = "#8DB0EC"
 WINDOW_WIDTH = 450
+WRAP_WIDTH = 410
+WAVE_WIDTH = 410
+WAVE_HEIGHT = 48
+WAVE_BARS = 60
+WAVE_BG = "#F7F9FC"
+WAVE_BORDER = "#C8CED6"
+POLL_MS = 50
 
 
 class RoundedButton(tk.Canvas):
@@ -142,9 +152,10 @@ class App:
 
         The flow process of this codes are as follows:
         1. Store the root window and initialize state (IDLE) and a thread-safe message queue
-        2. Detect whether a usable GPU is available (only offer the GPU option if so)
-        3. Build and lay out all widgets (output folder, model check, device choice, timer,
-           start button, status, progress bar, saved-path label)
+        2. Detect whether a usable GPU is available (only offer the GPU option if so), and work
+           out the screen scale factor so fixed pixel sizes stay proportional on scaled displays
+        3. Build and lay out all widgets (output folder, model check, device choice, mic switch,
+           timer, waveform, start button, status, progress bar, saved-path label)
         4. Start polling the message queue for updates from background threads
 
         The result of this function are as follows:
@@ -165,16 +176,21 @@ class App:
         self.session_dir = None
         self.output_dir = OUTPUT_DIR
         self.wav_path = None
+        self.mic_event = threading.Event()
         self.txt_path = None
 
         # 2. Detect whether a usable GPU is available
         self.gpu_available = is_gpu_available()
         self.device_var = tk.StringVar(value="cuda" if self.gpu_available else "cpu")
+        self.scale = self.root.winfo_fpixels("1i") / 96
+        self.wave_width = self._px(WAVE_WIDTH)
+        self.wave_height = self._px(WAVE_HEIGHT)
+        self.wrap_width = self._px(WRAP_WIDTH)
 
         # 3. Build and lay out all widgets
         self._apply_style()
         self.root.configure(bg="white")
-        self.root.minsize(WINDOW_WIDTH, 1)
+        self.root.minsize(self._px(WINDOW_WIDTH), 1)
         body = ttk.Frame(root, padding=(16, 16, 14, 24))
         body.pack(fill="both", expand=True)
 
@@ -191,9 +207,10 @@ class App:
         model_row.pack(fill="x", pady=(12, 0))
         self.check_button = ttk.Button(model_row, text="Check Model", width=12, command=self.on_check_model)
         self.check_button.pack(side="left")
-        self.model_dot = tk.Canvas(model_row, width=12, height=12, bg=self.root.cget("bg"), highlightthickness=0)
+        dot = self._px(12)
+        self.model_dot = tk.Canvas(model_row, width=dot, height=dot, bg=self.root.cget("bg"), highlightthickness=0)
         self.model_dot.pack(side="left", padx=(16, 6))
-        self.model_dot_id = self.model_dot.create_oval(1, 1, 11, 11, fill="#22A722", outline="")
+        self.model_dot_id = self.model_dot.create_oval(1, 1, dot - 1, dot - 1, fill="#22A722", outline="")
         self.model_label = ttk.Label(model_row, text="")
         self.model_label.pack(side="left")
 
@@ -208,13 +225,37 @@ class App:
         self.cpu_radio = ttk.Radiobutton(self.device_frame, text="CPU", variable=self.device_var, value="cpu")
         self.cpu_radio.pack(side="left", padx=(6, 0))
 
+        mic_row = ttk.Frame(body)
+        mic_row.pack(anchor="w", pady=(10, 0))
+        self.mic_var = tk.BooleanVar(value=False)
+        self.mic_check = ttk.Checkbutton(mic_row, text="My mic: OFF", variable=self.mic_var, command=self.on_mic_toggle)
+        self.mic_check.pack(side="left")
+        self.auto_var = tk.BooleanVar(value=False)
+        self.auto_check = ttk.Checkbutton(
+            mic_row, text="Auto: follow Meet mute", variable=self.auto_var, command=self.on_auto_toggle
+        )
+        self.auto_check.pack(side="left", padx=(16, 0))
+        self._refresh_mic_controls()
+
         self.timer_label = ttk.Label(body, text="00:00", font=("Segoe UI", 28))
         self.timer_label.pack(pady=(8, 2))
 
-        self.toggle_button = RoundedButton(body, text="Start Recording", command=self.on_toggle)
+        self.wave_levels = deque([0.0] * WAVE_BARS, maxlen=WAVE_BARS)
+        self.wave_canvas = tk.Canvas(body, width=self.wave_width, height=self.wave_height, bg=WAVE_BG, highlightthickness=0)
+        self.wave_canvas.pack(pady=(0, 4))
+        self._draw_waveform()
+
+        self.toggle_button = RoundedButton(
+            body,
+            text="Start Recording",
+            command=self.on_toggle,
+            width=self._px(150),
+            height=self._px(46),
+            radius=self._px(10),
+        )
         self.toggle_button.pack(pady=(4, 8))
 
-        self.status_label = ttk.Label(body, text="Idle", wraplength=410, justify="center")
+        self.status_label = ttk.Label(body, text="Idle", wraplength=self.wrap_width, justify="center")
         self.status_label.pack()
 
         self.progress_bar = ttk.Progressbar(body, mode="determinate", maximum=100)
@@ -224,7 +265,7 @@ class App:
         footer.pack(fill="x")
         self.progress_label = ttk.Label(footer, text="")
         self.progress_label.grid(row=0, column=0)
-        self.saved_label = ttk.Label(footer, text="", wraplength=410, justify="center")
+        self.saved_label = ttk.Label(footer, text="", wraplength=self.wrap_width, justify="center")
         self.saved_label.grid(row=1, column=0)
         footer.columnconfigure(0, weight=1)
         self.progress_label.grid_remove()
@@ -232,7 +273,7 @@ class App:
         self.on_check_model()
 
         # 4. Start polling the message queue for updates from background threads
-        self.root.after(150, self.poll_queue)
+        self.root.after(POLL_MS, self.poll_queue)
 
     def _apply_style(self):
         """
@@ -253,11 +294,98 @@ class App:
         style.theme_use("vista")
 
         # 2. White backgrounds and the same font on labels, radios and buttons
-        for name in ("TFrame", "TLabel", "TRadiobutton"):
+        for name in ("TFrame", "TLabel", "TRadiobutton", "TCheckbutton"):
             style.configure(name, background="white")
             style.map(name, background=[("active", "white")])
-        for name in ("TLabel", "TRadiobutton", "TButton"):
+        for name in ("TLabel", "TRadiobutton", "TCheckbutton", "TButton"):
             style.configure(name, font=("Segoe UI", 9))
+
+    def _px(self, pixels):
+        """
+        This function is about scaling a fixed pixel size to the screen's display scaling.
+        The variable used in this code are:
+        pixels: the size in pixels at 100% display scaling
+
+        The flow process of this codes are as follows:
+        1. Multiply by the scale factor and round to a whole pixel
+
+        The result of this function are as follows:
+        scaled: the size in pixels for this screen
+        """
+
+        # 1. Multiply by the scale factor and round
+        return round(pixels * self.scale)
+
+    def _draw_waveform(self):
+        """
+        This function is about drawing the waveform bars from the stored level history.
+        The variable used in this code are:
+        (none)
+
+        The flow process of this codes are as follows:
+        1. Clear the waveform canvas and draw the box around it
+        2. Draw one vertical bar per stored level inside the box, centred, at least 1px tall so
+           silence is a flat line
+
+        The result of this function are as follows:
+        (none)
+        """
+
+        # 1. Clear the canvas and draw the box
+        self.wave_canvas.delete("all")
+        self.wave_canvas.create_rectangle(
+            0, 0, self.wave_width - 1, self.wave_height - 1, outline=WAVE_BORDER, fill=WAVE_BG
+        )
+
+        # 2. Draw one centred vertical bar per stored level inside the box
+        pad = self._px(6)
+        step = (self.wave_width - 2 * pad) / WAVE_BARS
+        mid = self.wave_height / 2
+        room = mid - self._px(4)
+        for i, level in enumerate(self.wave_levels):
+            half = max(0.5, min(1.0, level) * room)
+            x = pad + i * step + step / 2
+            self.wave_canvas.create_line(x, mid - half, x, mid + half, fill=BLUE, width=max(1, step - 2))
+
+    def _reset_waveform(self):
+        """
+        This function is about clearing the waveform back to a flat line.
+        The variable used in this code are:
+        (none)
+
+        The flow process of this codes are as follows:
+        1. Fill the level history with silence
+        2. Redraw the waveform
+
+        The result of this function are as follows:
+        (none)
+        """
+
+        # 1. Fill the level history with silence
+        self.wave_levels.extend([0.0] * WAVE_BARS)
+
+        # 2. Redraw the waveform
+        self._draw_waveform()
+
+    def push_level(self, level):
+        """
+        This function is about adding the newest audio level and redrawing the waveform.
+        The variable used in this code are:
+        level: audio loudness from 0.0 (silent) to 1.0 (loudest)
+
+        The flow process of this codes are as follows:
+        1. Add the level to the history (the oldest level drops off)
+        2. Redraw the waveform
+
+        The result of this function are as follows:
+        (none)
+        """
+
+        # 1. Add the level to the history
+        self.wave_levels.append(level)
+
+        # 2. Redraw the waveform
+        self._draw_waveform()
 
     def _short_path(self, path):
         """
@@ -324,6 +452,87 @@ class App:
         if self.gpu_radio:
             self.gpu_radio.config(state=state)
         self.cpu_radio.config(state=state)
+
+    def on_mic_toggle(self):
+        """
+        This function is about turning the microphone on or off, also while recording.
+        The variable used in this code are:
+        (none)
+
+        The flow process of this codes are as follows:
+        1. Read the switch and set or clear the shared event the recorder watches
+        2. Show "My mic: ON" or "My mic: OFF" on the switch, with "(auto)" when Meet controls it
+
+        The result of this function are as follows:
+        (none)
+        """
+
+        # 1. Set or clear the shared event
+        is_on = self.mic_var.get()
+        if is_on:
+            self.mic_event.set()
+        else:
+            self.mic_event.clear()
+
+        # 2. Show the new state on the switch
+        label = "My mic: ON" if is_on else "My mic: OFF"
+        if self.auto_var.get():
+            label += " (auto)"
+        self.mic_check.config(text=label)
+
+    def on_auto_toggle(self):
+        """
+        This function is about switching between automatic (follow Meet) and manual microphone control.
+        The variable used in this code are:
+        (none)
+
+        The flow process of this codes are as follows:
+        1. Refresh which controls are usable and the switch's label
+
+        The result of this function are as follows:
+        (none)
+        """
+
+        # 1. Refresh the controls and label
+        self._refresh_mic_controls()
+        self.on_mic_toggle()
+
+    def _refresh_mic_controls(self):
+        """
+        This function is about enabling the right microphone controls for the current state.
+        The variable used in this code are:
+        (none)
+
+        The flow process of this codes are as follows:
+        1. The Auto checkbox is locked while recording
+        2. The manual "My mic" switch is locked while Auto is on (Meet controls it)
+
+        The result of this function are as follows:
+        (none)
+        """
+
+        # 1. Lock the Auto checkbox while recording
+        recording = getattr(self, "state", "IDLE") == "RECORDING"
+        self.auto_check.config(state="disabled" if recording else "normal")
+
+        # 2. Lock the manual switch while Auto is on
+        self.mic_check.config(state="disabled" if self.auto_var.get() else "normal")
+
+    def _on_meet_mic(self, is_on):
+        """
+        This function is about passing a Meet mute change from the watcher thread to the window.
+        The variable used in this code are:
+        is_on: True if Meet says you are unmuted, False if muted or Meet is not visible
+
+        The flow process of this codes are as follows:
+        1. Put the change on the message queue (the window updates widgets only on the main thread)
+
+        The result of this function are as follows:
+        (none)
+        """
+
+        # 1. Put the change on the message queue
+        self.msg_queue.put(("mic_auto", is_on))
 
     def on_browse(self):
         """
@@ -416,6 +625,7 @@ class App:
 
         # 2. Re-enable the setup controls and refresh the model indicator
         self._set_setup_controls("normal")
+        self._refresh_mic_controls()
         self.on_check_model()
 
     def _short_recording_note(self):
@@ -449,8 +659,9 @@ class App:
 
         The flow process of this codes are as follows:
         1. Build the date folder and timestamped session folder and file paths
-        2. Reset the UI (timer, status, progress, saved label)
-        3. Start the recording worker thread and the live timer tick
+        2. Reset the UI (timer, waveform, status, progress, saved label)
+        3. Start the recording worker thread and the live timer tick, and in auto mode start the
+           watcher that follows Meet's mute button (the microphone starts OFF)
 
         The result of this function are as follows:
         (none)
@@ -475,11 +686,17 @@ class App:
         self.progress_bar["value"] = 0
         self._set_text(self.progress_label, "")
         self.start_time = time.time()
+        self._reset_waveform()
         self._set_setup_controls("disabled")
 
-        # 3. Start the recording worker thread and the live timer tick
+        # 3. Start the recording worker thread, the live timer tick, and the Meet watcher (auto mode)
         self.tick_timer()
         threading.Thread(target=self._record_worker, daemon=True).start()
+        self._refresh_mic_controls()
+        if self.auto_var.get():
+            self.mic_var.set(False)
+            self.on_mic_toggle()
+            threading.Thread(target=watch_meet_mic, args=(self.stop_event, self._on_meet_mic), daemon=True).start()
 
     def _record_worker(self):
         """
@@ -488,7 +705,9 @@ class App:
         (none)
 
         The flow process of this codes are as follows:
-        1. Call record_system_audio with the session's stop_event
+        1. Call record_system_audio with the session's stop_event, the microphone switch (the
+           shared event the "My mic" switch sets and clears), and a callback that sends each
+           loudness value to the main thread for the waveform
         2. Notify the main thread that recording has finished (or that an error occurred)
 
         The result of this function are as follows:
@@ -496,7 +715,13 @@ class App:
         """
         try:
             # 1. Call record_system_audio with the session's stop_event
-            record_system_audio(self.wav_path, stop_event=self.stop_event)
+            record_system_audio(
+                self.wav_path,
+                stop_event=self.stop_event,
+                level_callback=lambda level: self.msg_queue.put(("level", level)),
+                use_mic=True,
+                mic_on_event=self.mic_event,
+            )
 
             # 2. Notify the main thread that recording has finished
             self.msg_queue.put(("recording_done", None))
@@ -656,20 +881,30 @@ class App:
 
         The flow process of this codes are as follows:
         1. Pull every pending message from the queue without blocking
-        2. Apply the corresponding widget updates for each message type
-        3. Reschedule itself to run again shortly
+        2. Apply the corresponding widget updates for each message type (loudness values are
+           combined into one, the loudest, so the waveform adds one bar per poll)
+        3. Draw the new waveform bar, then reschedule itself to run again shortly
 
         The result of this function are as follows:
         (none)
         """
+        new_level = None
         try:
             # 1. Pull every pending message from the queue without blocking
             while True:
                 event, payload = self.msg_queue.get_nowait()
 
                 # 2. Apply the corresponding widget updates for each message type
-                if event == "recording_done":
+                if event == "level":
+                    new_level = max(new_level or 0.0, payload)
+                elif event == "mic_auto":
+                    if self.auto_var.get():
+                        self.mic_var.set(payload)
+                        self.on_mic_toggle()
+                elif event == "recording_done":
+                    new_level = None
                     self.last_recording_seconds = time.time() - self.start_time
+                    self._reset_waveform()
                     self.begin_transcription()
                 elif event == "status":
                     self.status_label.config(text=payload)
@@ -699,11 +934,35 @@ class App:
         except queue.Empty:
             pass
 
-        # 3. Reschedule itself to run again shortly
-        self.root.after(150, self.poll_queue)
+        # 3. Draw the new waveform bar, then reschedule itself
+        if new_level is not None:
+            self.push_level(new_level)
+        self.root.after(POLL_MS, self.poll_queue)
+
+
+def enable_dpi_awareness():
+    """
+    This function is about telling Windows the app handles display scaling itself, so text is
+    drawn sharp instead of being stretched like a picture.
+    The variable used in this code are:
+    (none)
+
+    The flow process of this codes are as follows:
+    1. Ask Windows for system DPI awareness; ignore the call if it is not supported
+
+    The result of this function are as follows:
+    (none)
+    """
+
+    # 1. Ask Windows for system DPI awareness
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except (AttributeError, OSError):
+        pass
 
 
 if __name__ == "__main__":
+    enable_dpi_awareness()
     root = tk.Tk()
     app = App(root)
     root.mainloop()

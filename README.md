@@ -46,7 +46,7 @@ Prefer to run it from source code instead (for developers)? See [Run the project
 The application consists of six main features.
 
 ### 1. System Audio Recording
-Records whatever plays through your speakers via WASAPI loopback — Meet, Teams, Slack huddles, YouTube, any app. Does **not** record your microphone.
+Records whatever plays through your speakers via WASAPI loopback — Meet, Teams, Slack huddles, YouTube, any app. Also records your microphone and mixes it in when the **My mic** switch is ON, so your own voice is in the transcript. With **Auto: follow Meet mute** ticked (it starts unticked), the app reads the mute button of a Google Meet tab in Chrome (English labels, tab must be visible) and turns your mic ON or OFF for you; if no Meet button is visible for 3 seconds, the mic goes OFF. By default Auto is off: tick **My mic** yourself when you want your voice recorded (it starts OFF and can be flipped during a recording). If no microphone is available, the app records system audio only.
 
 ### 2. GPU-Accelerated Transcription, with CPU Fallback
 Transcribes with `faster-whisper` (`large-v3-turbo`). Uses your NVIDIA GPU automatically when one is detected, otherwise runs on CPU — no setup needed either way. If a GPU is available, the GUI shows a GPU/CPU toggle so you can pick manually. A live 0–100% progress bar tracks transcription either way.
