@@ -64,7 +64,9 @@ Unchanged: `main.py` (CLI), `transcribe.py`, `AudioTranscriber-CPU.spec`.
 3. Start-up on one PC, 3 runs: 1.2 s first launch, 0.8 s repeats. Memory after 6 s idle: 83 MB working set, 546 MB private (old exe: 64 MB and 529 MB).
 4. The first-launch time is not a fair comparison with the old exe (4.5 s): the new files had just been written, so Windows had them cached.
 5. In the exe, Start Recording works: timer runs, status shows "Recording...", setup controls lock.
-6. Not verified in the exe: sound reaching the waveform, the Meet auto watcher, and a full transcription. The CPU build has no GPU option.
+6. Full run verified in the built exe (CPU build, no GPU option): real click on Start, spoken test sentence, real click on Stop, transcription in 25 s, `.mp3` and `.txt` saved, 4 of 4 test words found. The status bar showed "Transcribing" with a moving bar, then "Done" with a full green bar and the saved path.
+7. Not verified in the exe: sound reaching the waveform and the Meet auto watcher.
+8. Published: branch merged through pull request #1; the zip on the GitHub release v1.0.1 is this build (SHA-256 checked); the v1.0.1 tag was moved to the final `main` commit so the source matches the exe. The old v1.0.1 zip was backed up locally first.
 
 ## Tests done (new look)
 
