@@ -4,6 +4,7 @@ import queue
 import threading
 import time
 import tkinter as tk
+import traceback
 import warnings
 from collections import deque
 from datetime import datetime
@@ -64,6 +65,8 @@ class App:
         self.output_dir = OUTPUT_DIR
         self.wav_path = None
         self.mic_event = threading.Event()
+        self.mic_range = "default"
+        self.recording_notes = []
         self.txt_path = None
 
         # 2. Detect whether a usable GPU is available
@@ -88,6 +91,7 @@ class App:
             "check_model": self.on_check_model,
             "mic": self.on_mic_toggle,
             "auto": self.on_auto_toggle,
+            "range": self.on_range_change,
         }
         cards = ConfigSection(page, self.theme, self.folder_var, self.device_var, self.gpu_available, self.mic_var, self.auto_var, commands)
         cards.pack(fill="x")
@@ -481,26 +485,72 @@ class App:
 
     def _short_recording_note(self):
         """
-        This function is about building a warning prefix when the actual recording turned out
-        unusually short, as a last-resort safety net beyond the stop-confirmation dialog (e.g. if
-        the recording was cut short by something other than the user clicking Stop).
+        This function is about building a warning prefix for the final status message: any
+        notices the recorder sent (microphone not usable, recording cut short), plus a warning
+        when the actual recording turned out unusually short (a last-resort safety net beyond the
+        stop-confirmation dialog).
         The variable used in this code are:
         (none)
 
         The flow process of this codes are as follows:
-        1. If the last recording's duration is unknown or not unusually short, return no note
-        2. Otherwise build a short warning line to prefix onto the final status message
+        1. Start with the recorder's notices, each ending in a space
+        2. If the last recording's duration is known and unusually short, add a short warning line
 
         The result of this function are as follows:
         note: a warning string ending in a space, or an empty string if nothing to flag
         """
 
-        # 1. If duration is unknown or not unusually short, return no note
-        if self.last_recording_seconds is None or self.last_recording_seconds >= SHORT_RECORDING_SECONDS:
+        # 1. Start with the recorder's notices
+        note = "".join(f"{message} " for message in self.recording_notes)
+
+        # 2. Add the short-recording warning
+        if self.last_recording_seconds is not None and self.last_recording_seconds < SHORT_RECORDING_SECONDS:
+            note += f"Note: recording was only {self.last_recording_seconds:.0f}s long — was that intentional? "
+        return note
+
+    def _write_error_log(self, title):
+        """
+        This function is about saving the full details of the current error to a log file in the
+        session folder, so the real reason is never lost.
+        The variable used in this code are:
+        title: short name of what failed, e.g. "Recording failed"
+
+        The flow process of this codes are as follows:
+        1. Build the log path inside the session folder
+        2. Append the time, the title and the full traceback of the error being handled
+        3. If the file cannot be written, return an empty path instead of raising a second error
+
+        The result of this function are as follows:
+        log_path: the path of the log file, or an empty string if it could not be written
+        """
+
+        # 1. Build the log path
+        log_path = os.path.join(self.session_dir or self.output_dir, "error_log.txt")
+
+        # 2. Append the details
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] {title}\n{traceback.format_exc()}\n")
+            return log_path
+        except OSError:
+            # 3. Could not write the log
             return ""
 
-        # 2. Otherwise build a short warning line
-        return f"Note: recording was only {self.last_recording_seconds:.0f}s long — was that intentional? "
+    def on_range_change(self, value):
+        """
+        This function is about remembering which mic range the user picked.
+        The variable used in this code are:
+        value: "default", "public" or "closed"
+
+        The flow process of this codes are as follows:
+        1. Store the value; the recorder reads it for every microphone chunk, so it works live
+
+        The result of this function are as follows:
+        (none)
+        """
+
+        # 1. Store the value
+        self.mic_range = value
 
     def start_recording(self):
         """
@@ -531,6 +581,7 @@ class App:
         self.stop_event = threading.Event()
         self.state = "RECORDING"
         self.last_recording_seconds = None
+        self.recording_notes = []
         self.toggle_button.config(text="Stop Recording")
         self.status_label.config(text="Recording...")
         self._set_text(self.saved_label, "")
@@ -558,9 +609,12 @@ class App:
 
         The flow process of this codes are as follows:
         1. Call record_system_audio with the session's stop_event, the microphone switch (the
-           shared event the "My mic" switch sets and clears), and a callback that sends each
-           loudness value to the main thread for the waveform
-        2. Notify the main thread that recording has finished (or that an error occurred)
+           shared event the "My mic" switch sets and clears), the mic range chosen in the
+           "Mic range" dropdown, a callback that sends each loudness value to the main thread
+           for the waveform, and a callback that sends the recorder's notices
+        2. Notify the main thread that recording has finished; if an error occurred, save its
+           full details to error_log.txt in the session folder and send the reason with the
+           log path
 
         The result of this function are as follows:
         (none, communicates via self.msg_queue)
@@ -573,12 +627,16 @@ class App:
                 level_callback=lambda level: self.msg_queue.put(("level", level)),
                 use_mic=True,
                 mic_on_event=self.mic_event,
+                mic_range_getter=lambda: self.mic_range,
+                notice_callback=lambda message: self.msg_queue.put(("notice", message)),
             )
 
             # 2. Notify the main thread that recording has finished
             self.msg_queue.put(("recording_done", None))
         except Exception as e:
-            self.msg_queue.put(("error", f"Recording failed: {e}"))
+            log_path = self._write_error_log("Recording failed")
+            reason = f"Recording failed: {type(e).__name__}: {e}"
+            self.msg_queue.put(("error", f"{reason} (details: {log_path})" if log_path else reason))
 
     def stop_recording(self):
         """
@@ -670,7 +728,9 @@ class App:
 
         The flow process of this codes are as follows:
         1. Transcribe the WAV file, reporting progress through the message queue (transcribe_audio
-           retries with VAD off internally if the first pass finds no speech, e.g. singing)
+           returns an empty transcript for a silent recording, and retries with VAD off internally
+           if the first pass finds no speech, e.g. singing); if it raises, save the full details
+           to error_log.txt in the session folder and send the reason with the log path
         2. If the transcript is still empty even after that retry (true silence), report that and
            stop here, keeping the WAV so it can be inspected instead of silently discarding it
         3. Convert the WAV to a smaller MP3 and delete the WAV
@@ -696,7 +756,9 @@ class App:
             self.msg_queue.put(("error", str(e)))
             return
         except Exception as e:
-            self.msg_queue.put(("error", f"Transcription failed: {e}"))
+            log_path = self._write_error_log("Transcription failed")
+            reason = f"Transcription failed: {type(e).__name__}: {e}"
+            self.msg_queue.put(("error", f"{reason} (details: {log_path})" if log_path else reason))
             return
 
         try:
@@ -755,6 +817,9 @@ class App:
                     if self.auto_var.get():
                         self.mic_var.set(payload)
                         self.on_mic_toggle()
+                elif event == "notice":
+                    self.recording_notes.append(payload)
+                    self._set_text(self.saved_label, self._short_recording_note())
                 elif event == "recording_done":
                     new_level = None
                     self.last_recording_seconds = time.time() - self.start_time
@@ -779,7 +844,7 @@ class App:
                     self._apply_visual_state("DONE")
                 elif event == "empty":
                     self.state = "IDLE"
-                    self.status_label.config(text="No speech detected (even without VAD)")
+                    self.status_label.config(text="No speech detected")
                     self._set_text(self.saved_label, f"{self._short_recording_note()}Transcript was empty. WAV kept at: {payload}")
                     self._reenable_controls()
                     self._apply_visual_state("IDLE")
