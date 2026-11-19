@@ -21,6 +21,11 @@ STATE_DOT = {
     "ERROR": t.RED,
 }
 STATE_BAR = {"ERROR": t.RED, "DONE": t.GREEN}
+RANGE_CHOICES = (
+    ("default", "Default (current)"),
+    ("closed", "Closed room (High): auto-boosts quiet voices"),
+)
+RANGE_SHORT = (("default", "Default"), ("closed", "Closed room"))
 
 
 def lerp_color(start, end, amount):
@@ -1063,12 +1068,14 @@ class ConfigSection(tk.Frame):
         gpu_available: True to show the GPU radio button
         mic_var: BooleanVar for the "My mic" checkbox
         auto_var: BooleanVar for the "Auto: follow Meet mute" checkbox
-        commands: dict with the handlers "browse", "check_model", "mic", "auto"
+        commands: dict with the handlers "browse", "check_model", "mic", "auto", and "range"
+        (called with "default", "public" or "closed" when the user picks a mic range)
 
         The flow process of this codes are as follows:
         1. Create the section and the two rounded cards of equal height
         2. Fill the OUTPUT card: heading, path box, Browse, Check Model, status dot and text
-        3. Fill the DEVICE card: heading, GPU/CPU radios, mic and Auto checkboxes
+        3. Fill the DEVICE card: heading, GPU/CPU radios, mic and Auto checkboxes, and the
+           "Mic range" dropdown button
 
         The result of this function are as follows:
         (none, builds the cards and exposes their widgets as attributes)
@@ -1126,6 +1133,73 @@ class ConfigSection(tk.Frame):
         right.place_widget(self.mic_check, px(14), px(64))
         self.auto_check = ToggleControl(right, theme, "Auto: follow Meet mute", auto_var, kind="check", command=commands["auto"])
         right.place_widget(self.auto_check, px(14), px(96))
+        self.range_commands = commands
+        self.range_var = tk.StringVar(value="default")
+        self.range_menu = tk.Menu(self, tearoff=0, font=theme.font(12))
+        for value, name in RANGE_CHOICES:
+            self.range_menu.add_radiobutton(label=name, variable=self.range_var, value=value, command=self._on_range_picked)
+        self.range_button = PillButton(
+            right, theme, self._range_text(), self._open_range_menu, card_width - px(28), px(28),
+            style="secondary", surround=t.CARD_BG, font_size=12,
+        )
+        right.place_widget(self.range_button, px(14), px(130))
+
+    def _range_text(self):
+        """
+        This function is about building the text of the Mic range button for the chosen range.
+        The variable used in this code are:
+        (none)
+
+        The flow process of this codes are as follows:
+        1. Find the short name of the chosen range and put it after "Mic range:" with a small arrow
+
+        The result of this function are as follows:
+        text: the button text, e.g. "Mic range: Default ▾"
+        """
+
+        # 1. Short name of the chosen range
+        short = dict(RANGE_SHORT)[self.range_var.get()]
+        return f"Mic range: {short} ▾"
+
+    def _open_range_menu(self):
+        """
+        This function is about opening the list of mic ranges just under the Mic range button.
+        The variable used in this code are:
+        (none)
+
+        The flow process of this codes are as follows:
+        1. Show the menu at the bottom-left corner of the button, and always release the mouse grab
+
+        The result of this function are as follows:
+        (none)
+        """
+
+        # 1. Show the menu under the button
+        button = self.range_button
+        try:
+            self.range_menu.tk_popup(button.winfo_rootx(), button.winfo_rooty() + button.winfo_height())
+        finally:
+            self.range_menu.grab_release()
+
+    def _on_range_picked(self):
+        """
+        This function is about reacting to a mic range chosen from the list.
+        The variable used in this code are:
+        (none)
+
+        The flow process of this codes are as follows:
+        1. Update the button text to the chosen range
+        2. Tell the app which range was chosen
+
+        The result of this function are as follows:
+        (none)
+        """
+
+        # 1. Update the button text
+        self.range_button.config(text=self._range_text())
+
+        # 2. Tell the app
+        self.range_commands["range"](self.range_var.get())
 
 
 class RecordingDeck(RoundedPanel):

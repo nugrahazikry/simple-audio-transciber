@@ -1,6 +1,9 @@
 import os
 import shutil
 import sys
+import wave
+
+import numpy as np
 
 # must be set before huggingface_hub is imported: error out after 5 min with no bytes received
 os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "300")
@@ -29,6 +32,7 @@ if NVIDIA_PACKAGES_AVAILABLE and sys.platform == "win32":
 
 MODEL_SIZE = "large-v3-turbo"
 MIN_FREE_GB = 2
+SILENCE_PEAK = 60
 
 
 class ModelSetupError(Exception):
@@ -135,6 +139,44 @@ def download_model_files():
         ) from e
 
 
+def is_near_silent(audio_path):
+    """
+    This function is about checking whether a WAV recording is practically silent (no sound at all).
+    The variable used in this code are:
+    audio_path: path to the WAV file to check
+
+    The flow process of this codes are as follows:
+    1. Open the WAV file; if it cannot be read as 16-bit WAV, say "not silent" so it is still transcribed
+    2. Read it one second at a time and keep the loudest sample seen (low memory)
+    3. Compare the loudest sample with SILENCE_PEAK (about -55 dBFS, far below any real voice)
+
+    The result of this function are as follows:
+    silent: True if the loudest sample is below SILENCE_PEAK
+    """
+
+    # 1. Open the file, falling back to "not silent" if it is not a readable 16-bit WAV
+    try:
+        wav = wave.open(audio_path, "rb")
+    except (wave.Error, EOFError, OSError):
+        return False
+
+    # 2. Read one second at a time and keep the loudest sample
+    with wav:
+        if wav.getsampwidth() != 2:
+            return False
+        loudest = 0
+        block = max(1, wav.getframerate())
+        while True:
+            data = wav.readframes(block)
+            if not data:
+                break
+            samples = np.frombuffer(data, dtype=np.int16)
+            loudest = max(loudest, int(np.abs(samples.astype(np.int32)).max()))
+
+    # 3. Compare with the silence limit
+    return loudest < SILENCE_PEAK
+
+
 def format_timestamp(seconds):
     """
     This function is about converting seconds into a [mm:ss] timestamp string.
@@ -215,13 +257,15 @@ def transcribe_audio(audio_path, output_path, progress_callback=None, device="au
     percentage available; falls back to printing to the console if not given
 
     The flow process of this codes are as follows:
-    1. Resolve "auto" to an actual device, then load the model (GPU uses float16, CPU uses
+    1. If the recording is practically silent, write an empty transcript and stop here (Whisper
+       invents text such as "Thank you." on silence, and loading the model would be wasted time)
+    2. Resolve "auto" to an actual device, then load the model (GPU uses float16, CPU uses
        int8), falling back to CPU if GPU loading fails for any reason
-    2. Run a first pass with vad_filter=True (measured best setting for normal speech)
-    3. If that pass found no speech at all (e.g. singing, which Silero VAD often misses),
+    3. Run a first pass with vad_filter=True (measured best setting for normal speech)
+    4. If that pass found no speech at all (e.g. singing, which Silero VAD often misses),
        retry once with vad_filter=False so content isn't silently lost — this retry can
        hallucinate text on true silence, so the caller is told via used_fallback
-    4. Write the full transcript to output_path
+    5. Write the full transcript to output_path
 
     The result of this function are as follows:
     transcript: the full transcribed text
@@ -234,7 +278,16 @@ def transcribe_audio(audio_path, output_path, progress_callback=None, device="au
         else:
             print(message)
 
-    # 1. Resolve "auto" to an actual device, then load the model with a CPU fallback
+    # 1. Practically silent recording: write an empty transcript and stop
+    if is_near_silent(audio_path):
+        report_status("Recording is silent. Skipping transcription.")
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write("")
+        if progress_callback:
+            progress_callback(100.0)
+        return "", output_path, False
+
+    # 2. Resolve "auto" to an actual device, then load the model with a CPU fallback
     if device == "auto":
         device = "cuda" if is_gpu_available() else "cpu"
 
@@ -255,17 +308,17 @@ def transcribe_audio(audio_path, output_path, progress_callback=None, device="au
         model = WhisperModel(MODEL_SIZE, device="cpu", compute_type="int8")
     report_status("Model loaded. Running transcription...")
 
-    # 2. Run a first pass with vad_filter=True (measured best setting for normal speech)
+    # 3. Run a first pass with vad_filter=True (measured best setting for normal speech)
     transcript_parts = _run_pass(model, audio_path, vad_filter=True, progress_callback=progress_callback)
     used_fallback = False
 
-    # 3. If no speech was found at all, retry once with vad_filter=False
+    # 4. If no speech was found at all, retry once with vad_filter=False
     if not transcript_parts:
         report_status("No speech detected with VAD on. Retrying with VAD off...")
         transcript_parts = _run_pass(model, audio_path, vad_filter=False, progress_callback=progress_callback)
         used_fallback = True
 
-    # 4. Write the full transcript to output_path
+    # 5. Write the full transcript to output_path
     transcript = "\n".join(transcript_parts)
 
     with open(output_path, "w", encoding="utf-8") as f:
